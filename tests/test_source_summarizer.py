@@ -1,6 +1,7 @@
 import csv
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 from wiki_tool.config import load_domain_config
@@ -78,6 +79,26 @@ class SourceSummarizerTests(unittest.TestCase):
 
             rows = list(csv.DictReader(domain.manifest_path.read_text(encoding="utf-8").splitlines()))
             self.assertEqual(rows[0]["status"], "needs_review")
+
+    def test_pdf_summary_preserves_page_boundary_when_text_is_available(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            domain = load_domain_config(write_domain(root), root=root)
+            raw_file = root / "raw" / "lecture.pdf"
+            raw_file.parent.mkdir()
+            raw_file.write_bytes(b"%PDF-1.7\n%%EOF")
+            scan_raw_sources(domain)
+
+            with patch(
+                "wiki_tool.extractors._extract_pdf_pages",
+                return_value=["1쪽 CAPM 설명은 기대수익률과 위험을 연결한다.", "2쪽 베타는 시장 위험 민감도다."],
+            ):
+                result = summarize_new_sources(domain)
+
+            self.assertEqual(result.summarized_count, 1)
+            content = (root / "wiki" / "sources" / "lecture.md").read_text(encoding="utf-8")
+            self.assertIn("PDF page 1", content)
+            self.assertIn("PDF page 2", content)
 
 
 if __name__ == "__main__":

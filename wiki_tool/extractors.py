@@ -53,6 +53,18 @@ def _extract_html(path: Path) -> ExtractedSource:
 
 
 def _extract_pdf_text_fallback(path: Path) -> ExtractedSource:
+    page_texts = _extract_pdf_pages(path)
+    if page_texts:
+        text = "\n".join(page_texts)
+        visual_notes = [f"PDF page {index}: {page_text[:160]}" for index, page_text in enumerate(page_texts, start=1)]
+        return ExtractedSource(
+            title=path.stem,
+            text=text,
+            visual_notes=visual_notes,
+            warnings=[],
+            recommended_actions=[],
+        )
+
     raw = path.read_bytes()
     text = raw.decode("utf-8", errors="ignore")
     text = re.sub(r"[^\w\s가-힣.,;:!?()\[\]{}%+-]", " ", text)
@@ -69,6 +81,24 @@ def _extract_pdf_text_fallback(path: Path) -> ExtractedSource:
         warnings=warnings,
         recommended_actions=actions,
     )
+
+
+def _extract_pdf_pages(path: Path) -> list[str]:
+    try:
+        from pypdf import PdfReader
+    except Exception:
+        return []
+
+    try:
+        reader = PdfReader(str(path))
+        pages: list[str] = []
+        for page in reader.pages:
+            text = (page.extract_text() or "").strip()
+            if text:
+                pages.append(re.sub(r"\s+", " ", text))
+        return pages
+    except Exception:
+        return []
 
 
 def _first_markdown_heading(text: str) -> str | None:
