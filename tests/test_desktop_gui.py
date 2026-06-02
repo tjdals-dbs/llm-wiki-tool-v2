@@ -36,6 +36,33 @@ class FakeAdapter:
             "related_pages": [],
         }
 
+    def list_wiki_pages(self, page_type=None):
+        pages = [
+            {"path": "wiki/sources/capm.md", "type": "source", "title": "CAPM Source"},
+            {"path": "wiki/concepts/capm.md", "type": "concept", "title": "CAPM"},
+        ]
+        if page_type is None:
+            return pages
+        return [page for page in pages if page["type"] == page_type]
+
+    def read_wiki_page(self, path):
+        if path == "wiki/sources/capm.md":
+            return "\n".join(
+                [
+                    "# CAPM Source",
+                    "",
+                    "## Quality Review",
+                    "",
+                    "- quality: usable",
+                    "- warnings: []",
+                    "- recommended_actions: []",
+                ]
+            )
+        return "# CAPM"
+
+    def get_related_pages(self, path, depth=1):
+        return [{"path": "wiki/sources/capm.md", "type": "source", "label": "CAPM Source"}]
+
 
 class DesktopGuiTests(unittest.TestCase):
     def test_korean_three_panel_labels_do_not_offer_upload_ux(self):
@@ -61,6 +88,16 @@ class DesktopGuiTests(unittest.TestCase):
         self.assertIn("lint 통과", presenter.run_wiki_lint())
         self.assertIn("wiki/concepts/capm.md", presenter.ask_agent("CAPM"))
         self.assertEqual(adapter.calls[:4], ["scan", "summarize", "organize", "lint"])
+
+    def test_presenter_reports_pending_sources_and_source_quality(self):
+        adapter = FakeAdapter()
+        presenter = DesktopGuiPresenter(adapter)
+
+        status = presenter.wiki_status()
+
+        self.assertIn("pending source", status)
+        self.assertIn("source quality", status)
+        self.assertIn("usable", status)
 
 
 if __name__ == "__main__":

@@ -47,6 +47,26 @@ class DesktopGuiPresenter:
         issues = result.get("issues", [])
         return "wiki lint 경고:\n" + "\n".join(f"- {item['path']}: {item['message']}" for item in issues)
 
+    def wiki_status(self) -> str:
+        sources = self.adapter.list_wiki_pages(page_type="source")
+        concepts = self.adapter.list_wiki_pages(page_type="concept")
+        pending_count = 0
+        quality_lines: list[str] = []
+        for page in sources:
+            content = self.adapter.read_wiki_page(page["path"])
+            quality = _quality_value(content)
+            if quality in {"weak", "needs_review"}:
+                pending_count += 1
+            quality_lines.append(f"- {page['path']}: {quality}")
+        return "\n".join(
+            [
+                f"pending source: {pending_count}",
+                f"concept pages: {len(concepts)}",
+                "source quality:",
+                *(quality_lines or ["- source page 없음"]),
+            ]
+        )
+
     def ask_agent(self, query: str) -> str:
         if not query.strip():
             return "질문을 입력하세요."
@@ -80,6 +100,7 @@ class DesktopWikiApp:
         self.search_var = tk.StringVar()
         self.question_var = tk.StringVar()
         self.page_items: dict[str, str] = {}
+        self.related_items: dict[str, str] = {}
 
         self._build_layout()
         self.refresh_pages()
@@ -115,8 +136,9 @@ class DesktopWikiApp:
         self.content_text = tk.Text(center, wrap=tk.WORD, height=30)
         self.content_text.pack(fill=tk.BOTH, expand=True, pady=(6, 6))
         ttk.Label(center, text="주변 graph").pack(anchor=tk.W)
-        self.graph_text = tk.Text(center, wrap=tk.WORD, height=8)
-        self.graph_text.pack(fill=tk.BOTH, expand=False)
+        self.graph_list = tk.Listbox(center, height=8)
+        self.graph_list.pack(fill=tk.BOTH, expand=False)
+        self.graph_list.bind("<<ListboxSelect>>", self._on_related_selected)
 
         ttk.Label(right, text=GUI_PANEL_TITLES[2]).pack(anchor=tk.W)
         for label, command in [
@@ -124,6 +146,7 @@ class DesktopWikiApp:
             ("새 source 요약", self._summarize),
             ("pending concept 조직", self._organize),
             ("wiki lint", self._lint),
+            ("상태 새로고침", self._status),
         ]:
             ttk.Button(right, text=label, command=command).pack(fill=tk.X, pady=(6, 0))
 
@@ -147,10 +170,29 @@ class DesktopWikiApp:
         if not selected:
             return
         path = self.page_items[selected[0]]
+        self._show_page(path)
+
+    def _show_page(self, path: str) -> None:
         self._set_text(self.content_text, self.adapter.read_wiki_page(path))
         related = self.adapter.get_related_pages(path, depth=1)
-        graph_lines = [f"- {item['path']} ({item['type']})" for item in related] or ["- 주변 page 없음"]
-        self._set_text(self.graph_text, "\n".join(graph_lines))
+        self.graph_list.delete(0, self.tk.END)
+        self.related_items.clear()
+        if not related:
+            self.graph_list.insert(self.tk.END, "주변 page 없음")
+            return
+        for item in related:
+            label = f"{item['path']} ({item['type']})"
+            self.graph_list.insert(self.tk.END, label)
+            self.related_items[label] = item["path"]
+
+    def _on_related_selected(self, _event: object) -> None:
+        selected = self.graph_list.curselection()
+        if not selected:
+            return
+        label = self.graph_list.get(selected[0])
+        path = self.related_items.get(label)
+        if path:
+            self._show_page(path)
 
     def _scan(self) -> None:
         self._set_agent_status(self.presenter.scan_raw_sources())
@@ -167,6 +209,9 @@ class DesktopWikiApp:
     def _lint(self) -> None:
         self._set_agent_status(self.presenter.run_wiki_lint())
 
+    def _status(self) -> None:
+        self._set_agent_status(self.presenter.wiki_status())
+
     def _ask(self) -> None:
         self._set_agent_status(self.presenter.ask_agent(self.question_var.get()))
 
@@ -181,3 +226,10 @@ class DesktopWikiApp:
 def run_desktop_gui(config: DomainConfig) -> None:
     app = DesktopWikiApp(config)
     app.run()
+
+
+def _quality_value(content: str) -> str:
+    for line in content.splitlines():
+        if line.startswith("- quality:"):
+            return line.split(":", 1)[1].strip()
+    return "unknown"
