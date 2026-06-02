@@ -8,6 +8,17 @@ from .mcp_tools import WikiToolAdapter
 
 GUI_PANEL_TITLES = ["위키 페이지", "선택한 페이지", "에이전트 제어"]
 GUI_ACTION_LABELS = ["raw 스캔", "새 source 요약", "pending concept 조직", "wiki lint", "에이전트에게 질문"]
+GUI_PANEL_WEIGHTS = (280, 796, 364)
+GUI_STYLE_COLORS = {
+    "app_bg": "#e9ebef",
+    "sidebar_bg": "#eef0f4",
+    "document_bg": "#f7f7f5",
+    "agent_bg": "#f3f5f8",
+    "border": "#d5dbe6",
+    "text": "#242936",
+    "muted": "#6f7785",
+    "accent": "#74a7ff",
+}
 
 
 class DesktopGuiPresenter:
@@ -95,7 +106,8 @@ class DesktopWikiApp:
         self.presenter = DesktopGuiPresenter(self.adapter)
         self.root = tk.Tk()
         self.root.title("LLM Wiki Tool v2")
-        self.root.geometry("1180x720")
+        self.root.geometry("1440x840")
+        self.root.configure(bg=GUI_STYLE_COLORS["app_bg"])
 
         self.search_var = tk.StringVar()
         self.question_var = tk.StringVar()
@@ -111,17 +123,20 @@ class DesktopWikiApp:
     def _build_layout(self) -> None:
         ttk = self.ttk
         tk = self.tk
+        self._configure_style()
         main = ttk.PanedWindow(self.root, orient=tk.HORIZONTAL)
         main.pack(fill=tk.BOTH, expand=True)
 
-        left = ttk.Frame(main, padding=8)
-        center = ttk.Frame(main, padding=8)
-        right = ttk.Frame(main, padding=8)
+        left = ttk.Frame(main, padding=12, style="Sidebar.TFrame")
+        center = ttk.Frame(main, padding=(26, 18), style="Document.TFrame")
+        right = ttk.Frame(main, padding=12, style="Agent.TFrame")
         main.add(left, weight=1)
         main.add(center, weight=3)
         main.add(right, weight=2)
+        self.root.after(0, lambda: self._apply_initial_panel_sizes(main))
 
-        ttk.Label(left, text=GUI_PANEL_TITLES[0]).pack(anchor=tk.W)
+        ttk.Label(left, text="LLM 위키", style="Title.TLabel").pack(anchor=tk.W)
+        ttk.Label(left, text=GUI_PANEL_TITLES[0], style="Hint.TLabel").pack(anchor=tk.W, pady=(0, 10))
         search_row = ttk.Frame(left)
         search_row.pack(fill=tk.X, pady=(6, 6))
         ttk.Entry(search_row, textvariable=self.search_var).pack(side=tk.LEFT, fill=tk.X, expand=True)
@@ -132,15 +147,36 @@ class DesktopWikiApp:
         self.page_tree.pack(fill=tk.BOTH, expand=True)
         self.page_tree.bind("<<TreeviewSelect>>", self._on_page_selected)
 
-        ttk.Label(center, text=GUI_PANEL_TITLES[1]).pack(anchor=tk.W)
-        self.content_text = tk.Text(center, wrap=tk.WORD, height=30)
+        ttk.Label(center, text=GUI_PANEL_TITLES[1], style="SectionTitle.TLabel").pack(anchor=tk.W)
+        self.content_text = tk.Text(
+            center,
+            wrap=tk.WORD,
+            height=30,
+            bg=GUI_STYLE_COLORS["document_bg"],
+            fg=GUI_STYLE_COLORS["text"],
+            relief=tk.FLAT,
+            padx=16,
+            pady=14,
+            font=("Segoe UI", 11),
+        )
         self.content_text.pack(fill=tk.BOTH, expand=True, pady=(6, 6))
-        ttk.Label(center, text="주변 graph").pack(anchor=tk.W)
-        self.graph_list = tk.Listbox(center, height=8)
+        ttk.Label(center, text="주변 graph", style="SectionTitle.TLabel").pack(anchor=tk.W)
+        self.graph_list = tk.Listbox(
+            center,
+            height=9,
+            bg="#f0f2f5",
+            fg=GUI_STYLE_COLORS["text"],
+            relief=tk.FLAT,
+            highlightthickness=1,
+            highlightbackground=GUI_STYLE_COLORS["border"],
+            font=("Segoe UI", 10),
+        )
         self.graph_list.pack(fill=tk.BOTH, expand=False)
         self.graph_list.bind("<<ListboxSelect>>", self._on_related_selected)
 
-        ttk.Label(right, text=GUI_PANEL_TITLES[2]).pack(anchor=tk.W)
+        ttk.Label(right, text=GUI_PANEL_TITLES[2], style="SectionTitle.TLabel").pack(anchor=tk.W)
+        action_group = ttk.LabelFrame(right, text="raw maintenance", padding=8)
+        action_group.pack(fill=tk.X, pady=(8, 10))
         for label, command in [
             ("raw 스캔", self._scan),
             ("새 source 요약", self._summarize),
@@ -148,13 +184,63 @@ class DesktopWikiApp:
             ("wiki lint", self._lint),
             ("상태 새로고침", self._status),
         ]:
-            ttk.Button(right, text=label, command=command).pack(fill=tk.X, pady=(6, 0))
+            ttk.Button(action_group, text=label, command=command).pack(fill=tk.X, pady=(5, 0))
 
-        ttk.Label(right, text="질문").pack(anchor=tk.W, pady=(16, 2))
+        ttk.Label(right, text="질문", style="SectionTitle.TLabel").pack(anchor=tk.W, pady=(8, 2))
         ttk.Entry(right, textvariable=self.question_var).pack(fill=tk.X)
         ttk.Button(right, text="에이전트에게 질문", command=self._ask).pack(fill=tk.X, pady=(6, 6))
-        self.agent_text = tk.Text(right, wrap=tk.WORD, height=22)
+        self.agent_text = tk.Text(
+            right,
+            wrap=tk.WORD,
+            height=22,
+            bg="#ffffff",
+            fg=GUI_STYLE_COLORS["text"],
+            relief=tk.FLAT,
+            padx=10,
+            pady=10,
+            font=("Segoe UI", 10),
+        )
         self.agent_text.pack(fill=tk.BOTH, expand=True)
+
+    def _configure_style(self) -> None:
+        style = self.ttk.Style(self.root)
+        try:
+            style.theme_use("clam")
+        except self.tk.TclError:
+            pass
+        style.configure("Sidebar.TFrame", background=GUI_STYLE_COLORS["sidebar_bg"])
+        style.configure("Document.TFrame", background=GUI_STYLE_COLORS["document_bg"])
+        style.configure("Agent.TFrame", background=GUI_STYLE_COLORS["agent_bg"])
+        style.configure(
+            "Title.TLabel",
+            background=GUI_STYLE_COLORS["sidebar_bg"],
+            foreground=GUI_STYLE_COLORS["text"],
+            font=("Segoe UI", 18, "bold"),
+        )
+        style.configure(
+            "Hint.TLabel",
+            background=GUI_STYLE_COLORS["sidebar_bg"],
+            foreground=GUI_STYLE_COLORS["muted"],
+            font=("Segoe UI", 10),
+        )
+        style.configure(
+            "SectionTitle.TLabel",
+            background=GUI_STYLE_COLORS["app_bg"],
+            foreground=GUI_STYLE_COLORS["text"],
+            font=("Segoe UI", 12, "bold"),
+        )
+        style.configure("TButton", padding=(10, 7), font=("Segoe UI", 10, "bold"))
+        style.configure("TEntry", padding=6)
+        style.configure("Treeview", rowheight=26, font=("Segoe UI", 10))
+        style.configure("Treeview.Heading", font=("Segoe UI", 9, "bold"))
+
+    def _apply_initial_panel_sizes(self, main: Any) -> None:
+        left_width, center_width, _right_width = GUI_PANEL_WEIGHTS
+        try:
+            main.sashpos(0, left_width)
+            main.sashpos(1, left_width + center_width)
+        except self.tk.TclError:
+            return
 
     def refresh_pages(self) -> None:
         query = self.search_var.get().strip()

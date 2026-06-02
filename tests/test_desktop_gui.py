@@ -1,6 +1,12 @@
 import unittest
 
-from wiki_tool.desktop_gui import GUI_ACTION_LABELS, GUI_PANEL_TITLES, DesktopGuiPresenter
+from wiki_tool.desktop_gui import (
+    GUI_ACTION_LABELS,
+    GUI_PANEL_TITLES,
+    GUI_PANEL_WEIGHTS,
+    GUI_STYLE_COLORS,
+    DesktopGuiPresenter,
+)
 
 
 class FakeAdapter:
@@ -77,6 +83,8 @@ class DesktopGuiTests(unittest.TestCase):
         self.assertNotIn("upload", labels.lower())
         self.assertNotIn("dropzone", labels.lower())
         self.assertNotIn("파일 업로드", labels)
+        self.assertEqual(GUI_PANEL_WEIGHTS, (280, 796, 364))
+        self.assertEqual(GUI_STYLE_COLORS["document_bg"], "#f7f7f5")
 
     def test_presenter_returns_korean_status_messages_for_agent_actions(self):
         adapter = FakeAdapter()
