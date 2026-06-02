@@ -27,6 +27,15 @@ class FakeAdapter:
         self.calls.append(("context", query, limit))
         return [{"path": "wiki/concepts/capm.md", "title": "CAPM"}]
 
+    def answer_question(self, query):
+        self.calls.append(("answer", query))
+        return {
+            "status": "ok",
+            "answer": "wiki 근거를 기준으로 답합니다.",
+            "used_pages": [{"path": "wiki/concepts/capm.md", "title": "CAPM"}],
+            "related_pages": [],
+        }
+
 
 class DesktopGuiTests(unittest.TestCase):
     def test_korean_three_panel_labels_do_not_offer_upload_ux(self):

@@ -33,11 +33,13 @@ class WikiToolAdapter:
         return wiki_path.read_text(encoding="utf-8")
 
     def search_wiki(self, query: str, limit: int = 10) -> list[dict[str, Any]]:
-        query_lower = query.lower()
+        query_terms = _query_terms(query)
         matches: list[dict[str, Any]] = []
         for page in self.list_wiki_pages():
             content = self.read_wiki_page(page["path"])
-            score = content.lower().count(query_lower) + page["title"].lower().count(query_lower) * 3
+            content_lower = content.lower()
+            title_lower = page["title"].lower()
+            score = sum(content_lower.count(term) + title_lower.count(term) * 3 for term in query_terms)
             if score <= 0:
                 continue
             matches.append(
@@ -46,7 +48,7 @@ class WikiToolAdapter:
                     "type": page["type"],
                     "title": page["title"],
                     "score": score,
-                    "snippet": _snippet(content, query),
+                    "snippet": _snippet(content, query_terms[0] if query_terms else query),
                 }
             )
         return sorted(matches, key=lambda item: (-item["score"], item["path"]))[:limit]
@@ -80,6 +82,31 @@ class WikiToolAdapter:
                     }
                 )
         return context[:limit]
+
+    def answer_question(self, query: str) -> dict[str, Any]:
+        context = self.ask_wiki_context(query, limit=5)
+        if not context:
+            return {
+                "status": "no_evidence",
+                "answer": "근거가 부족합니다. 현재 wiki에서 질문에 답할 수 있는 source evidence를 찾지 못했습니다.",
+                "used_pages": [],
+                "related_pages": [],
+            }
+
+        used_pages = [context[0]]
+        related_pages = context[1:]
+        snippets = [item.get("snippet", "") for item in context if item.get("snippet")]
+        evidence_text = " ".join(snippets[:2]).strip()
+        answer = (
+            "wiki 근거를 기준으로 답하면, "
+            + (evidence_text if evidence_text else "관련 page를 확인해야 합니다.")
+        )
+        return {
+            "status": "ok",
+            "answer": answer,
+            "used_pages": used_pages,
+            "related_pages": related_pages,
+        }
 
     def scan_raw_sources(self) -> dict[str, Any]:
         result = core_scan_raw_sources(self.config)
@@ -160,6 +187,24 @@ def _snippet(content: str, query: str) -> str:
     start = max(0, index - 60)
     end = min(len(compact), index + len(query) + 100)
     return compact[start:end]
+
+
+def _query_terms(query: str) -> list[str]:
+    terms: list[str] = []
+    for raw_term in re.findall(r"[0-9A-Za-z가-힣]+", query.lower()):
+        stripped = _strip_korean_particle(raw_term)
+        for candidate in [raw_term, stripped]:
+            if candidate and len(candidate) >= 2 and candidate not in terms:
+                terms.append(candidate)
+    return terms or [query.lower()]
+
+
+def _strip_korean_particle(term: str) -> str:
+    particles = ["으로", "에서", "에게", "은", "는", "이", "가", "을", "를", "과", "와", "의"]
+    for particle in particles:
+        if term.endswith(particle) and len(term) > len(particle):
+            return term[: -len(particle)]
+    return term
 
 
 def _first_nonempty_line(content: str) -> str:

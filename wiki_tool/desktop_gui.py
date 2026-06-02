@@ -50,11 +50,16 @@ class DesktopGuiPresenter:
     def ask_agent(self, query: str) -> str:
         if not query.strip():
             return "질문을 입력하세요."
-        context = self.adapter.ask_wiki_context(query, limit=5)
-        if not context:
-            return "근거가 충분하지 않습니다. 관련 wiki page를 찾지 못했습니다."
-        lines = ["근거 page:"]
-        for item in context:
+        answer = self.adapter.answer_question(query)
+        lines = [answer["answer"], "", "used pages:"]
+        for item in answer.get("used_pages", []):
+            lines.append(f"- {item['path']}: {item.get('title', '')}")
+        lines.append("")
+        lines.append("related pages:")
+        related = answer.get("related_pages", [])
+        if not related:
+            lines.append("- 없음")
+        for item in related:
             lines.append(f"- {item['path']}: {item.get('title', '')}")
         return "\n".join(lines)
 
