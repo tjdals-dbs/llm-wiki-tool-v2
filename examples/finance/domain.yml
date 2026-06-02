@@ -1,0 +1,8 @@
+name: Finance Investment Theory
+slug: finance
+description: Educational wiki for finance investment theory.
+disclaimer: Educational use only. Not investment advice.
+raw_dir: raw
+wiki_dir: wiki
+manifest: manifests/raw_sources.csv
+language: ko
