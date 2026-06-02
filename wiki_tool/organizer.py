@@ -82,6 +82,7 @@ class ParsedSourceSummary:
     key_points: list[str]
     evidence: list[str]
     candidate_concepts: list[str]
+    candidate_concept_evidence: dict[str, list[str]]
     quality: str
 
 
@@ -93,28 +94,31 @@ def _parse_source_summary(path: Path) -> ParsedSourceSummary:
         key_points=_section_bullets(content, "Key Points"),
         evidence=_section_bullets(content, "Evidence"),
         candidate_concepts=_section_bullets(content, "Candidate Concepts"),
+        candidate_concept_evidence=_section_concept_evidence(content, "Candidate Concept Evidence"),
         quality=_quality(content),
     )
 
 
 def _render_concept_page(name: str, source: ParsedSourceSummary, source_link: str) -> str:
-    explanation = source.summary if source.summary else "소스 요약을 바탕으로 정리한 개념입니다."
-    evidence = source.evidence[:3] or source.key_points[:3]
+    evidence = _evidence_for_concept(name, source)
+    definition = _definition_for_concept(name, evidence, source.summary)
+    explanation = _explanation_items(evidence, source.key_points)
+    related = _related_concepts(name, source.candidate_concepts)
     return "\n".join(
         [
             f"# {name}",
             "",
             "## Definition",
             "",
-            explanation,
+            definition,
             "",
             "## Explanation",
             "",
-            "\n".join(f"- {item}" for item in source.key_points) if source.key_points else "- 추가 설명이 필요합니다.",
+            _bullet_list(explanation),
             "",
             "## Related Concepts",
             "",
-            "- 없음",
+            _bullet_list(related),
             "",
             "## Source Evidence",
             "",
@@ -157,6 +161,18 @@ def _section_bullets(content: str, heading: str) -> list[str]:
     return items
 
 
+def _section_concept_evidence(content: str, heading: str) -> dict[str, list[str]]:
+    evidence: dict[str, list[str]] = {}
+    for line in _section_bullets(content, heading):
+        if ":" not in line:
+            continue
+        concept, raw_evidence = line.split(":", 1)
+        items = [item.strip() for item in raw_evidence.split(" / ") if item.strip()]
+        if items and items != ["근거 문장을 찾지 못했습니다."]:
+            evidence[concept.strip()] = items
+    return evidence
+
+
 def _section_lines(content: str, heading: str) -> list[str]:
     lines = content.splitlines()
     marker = f"## {heading}"
@@ -181,6 +197,55 @@ def _quality(content: str) -> str:
 def _slug(value: str) -> str:
     normalized = re.sub(r"[^0-9A-Za-z가-힣_-]+", "-", value).strip("-").lower()
     return normalized or "concept"
+
+
+def _evidence_for_concept(name: str, source: ParsedSourceSummary) -> list[str]:
+    concept_evidence = source.candidate_concept_evidence.get(name, [])
+    if concept_evidence:
+        return _dedupe(concept_evidence + source.evidence)[:4]
+    related_evidence = [item for item in source.evidence if name.casefold() in item.casefold()]
+    return _dedupe(related_evidence + source.evidence + source.key_points)[:4]
+
+
+def _definition_for_concept(name: str, evidence: list[str], fallback_summary: str) -> str:
+    if evidence:
+        primary = evidence[0]
+        if name.casefold() in primary.casefold():
+            return primary
+        return f"{name}은 source evidence에서 확인된 개념이며, 핵심 근거는 다음과 같습니다: {primary}"
+    return fallback_summary or "source summary 근거를 바탕으로 추가 정리가 필요한 개념입니다."
+
+
+def _explanation_items(evidence: list[str], key_points: list[str]) -> list[str]:
+    return _dedupe(evidence + key_points)[:6]
+
+
+def _related_concepts(name: str, candidate_concepts: list[str]) -> list[str]:
+    normalized_name = name.casefold()
+    return [
+        concept
+        for concept in candidate_concepts
+        if concept.casefold() != normalized_name and not _is_generic_concept(concept)
+    ][:6]
+
+
+def _dedupe(items: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for item in items:
+        cleaned = item.strip()
+        key = cleaned.casefold()
+        if not cleaned or key in seen or cleaned == "없음":
+            continue
+        seen.add(key)
+        result.append(cleaned)
+    return result
+
+
+def _bullet_list(items: list[str]) -> str:
+    if not items:
+        return "- 없음"
+    return "\n".join(f"- {item}" for item in items)
 
 
 def _is_generic_concept(value: str) -> bool:

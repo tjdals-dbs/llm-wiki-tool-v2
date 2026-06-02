@@ -104,6 +104,39 @@ class ConceptGraphLintTests(unittest.TestCase):
             self.assertIn("[first](../sources/first.md)", content)
             self.assertIn("[second](../sources/second.md)", content)
 
+    def test_concept_page_uses_concept_specific_evidence(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            domain = load_domain_config(write_domain(root), root=root)
+            raw_file = root / "raw" / "valuation.md"
+            raw_file.parent.mkdir()
+            raw_file.write_text(
+                "\n".join(
+                    [
+                        "# Valuation",
+                        "이 문서는 수업 전에 적은 짧은 안내다.",
+                        "DCF는 미래 현금흐름을 현재가치로 할인해 기업가치를 추정하는 방법이다.",
+                        "할인율은 현금흐름의 위험과 자본비용을 반영한다.",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            scan_raw_sources(domain)
+            summarize_new_sources(domain)
+
+            result = organize_pending_sources(domain)
+
+            self.assertEqual(result.promoted_count, 1)
+            concept_page = root / "wiki" / "concepts" / "valuation.md"
+            content = concept_page.read_text(encoding="utf-8")
+            self.assertIn("## Definition", content)
+            self.assertIn("DCF는 미래 현금흐름을 현재가치로 할인해 기업가치를 추정하는 방법이다.", content)
+            self.assertIn("## Related Concepts", content)
+            self.assertIn("- DCF", content)
+            self.assertIn("- 할인율", content)
+            self.assertNotIn("Raw path", content)
+            self.assertNotIn("SHA256", content)
+
     def test_generic_candidate_concept_is_not_promoted(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
