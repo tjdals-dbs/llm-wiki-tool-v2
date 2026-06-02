@@ -39,21 +39,33 @@ def organize_pending_sources(config: DomainConfig, limit: int | None = None) -> 
             dropped_count += 1
             continue
 
-        concept_name = candidate_concepts[0]
-        concept_path = config.wiki_dir / "concepts" / f"{_slug(concept_name)}.md"
         source_link = f"[{Path(entry.source_page).stem}](../sources/{Path(entry.source_page).name})"
-        if concept_path.exists():
-            existing = concept_path.read_text(encoding="utf-8")
-            if source_link not in existing:
-                concept_path.write_text(existing.rstrip() + f"\n- {source_link}\n", encoding="utf-8")
-            merged_count += 1
-        else:
-            concept_path.parent.mkdir(parents=True, exist_ok=True)
-            concept_path.write_text(
-                _render_concept_page(concept_name, source, source_link),
-                encoding="utf-8",
-            )
-            promoted_count += 1
+        organized_any = False
+        for concept_name in candidate_concepts:
+            if not _has_concept_evidence(concept_name, source):
+                continue
+
+            concept_path = _concept_page_path(config, concept_name)
+            evidence = _evidence_for_concept(concept_name, source)
+            if concept_path.exists():
+                existing = concept_path.read_text(encoding="utf-8")
+                concept_path.write_text(
+                    _merge_concept_page(existing, source_link, evidence),
+                    encoding="utf-8",
+                )
+                merged_count += 1
+            else:
+                concept_path.parent.mkdir(parents=True, exist_ok=True)
+                concept_path.write_text(
+                    _render_concept_page(concept_name, source, source_link),
+                    encoding="utf-8",
+                )
+                promoted_count += 1
+            organized_any = True
+
+        if not organized_any:
+            dropped_count += 1
+            continue
 
         entries[key] = ManifestEntry(
             path=entry.path,
@@ -199,6 +211,27 @@ def _slug(value: str) -> str:
     return normalized or "concept"
 
 
+def _concept_page_path(config: DomainConfig, concept_name: str) -> Path:
+    candidate = config.wiki_dir / "concepts" / f"{_slug(concept_name)}.md"
+    if candidate.exists():
+        return candidate
+    concept_dir = config.wiki_dir / "concepts"
+    if not concept_dir.exists():
+        return candidate
+    normalized_name = _normalize_concept_name(concept_name)
+    for path in sorted(concept_dir.glob("*.md")):
+        if _normalize_concept_name(_title(path.read_text(encoding="utf-8"))) == normalized_name:
+            return path
+    return candidate
+
+
+def _has_concept_evidence(name: str, source: ParsedSourceSummary) -> bool:
+    if source.candidate_concept_evidence.get(name):
+        return True
+    normalized_name = name.casefold()
+    return any(normalized_name in item.casefold() for item in source.evidence + source.key_points)
+
+
 def _evidence_for_concept(name: str, source: ParsedSourceSummary) -> list[str]:
     concept_evidence = source.candidate_concept_evidence.get(name, [])
     if concept_evidence:
@@ -246,6 +279,28 @@ def _bullet_list(items: list[str]) -> str:
     if not items:
         return "- 없음"
     return "\n".join(f"- {item}" for item in items)
+
+
+def _merge_concept_page(existing: str, source_link: str, evidence: list[str]) -> str:
+    lines_to_add = [source_link, *evidence]
+    deduped_additions = [item for item in _dedupe(lines_to_add) if f"- {item}" not in existing]
+    if not deduped_additions:
+        return existing
+
+    insertion = "".join(f"- {item}\n" for item in deduped_additions)
+    marker = "## Source Evidence"
+    if marker not in existing:
+        return existing.rstrip() + "\n\n## Source Evidence\n\n" + insertion
+
+    start = existing.index(marker)
+    next_heading = existing.find("\n## ", start + len(marker))
+    if next_heading < 0:
+        return existing.rstrip() + "\n" + insertion
+    return existing[:next_heading].rstrip() + "\n" + insertion + existing[next_heading:]
+
+
+def _normalize_concept_name(value: str) -> str:
+    return re.sub(r"\s+", " ", value).strip().casefold()
 
 
 def _is_generic_concept(value: str) -> bool:
