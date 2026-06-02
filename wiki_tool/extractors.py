@@ -91,6 +91,11 @@ class _ReadableHTMLParser(HTMLParser):
             self._skip_depth += 1
         if tag == "title":
             self._capture_title = True
+        if tag == "img" and not self._skip_depth:
+            attrs_map = dict(attrs)
+            alt = (attrs_map.get("alt") or "").strip()
+            if alt:
+                self.parts.append(alt)
 
     def handle_endtag(self, tag: str) -> None:
         if tag in {"script", "style", "nav", "footer", "aside"} and self._skip_depth:
