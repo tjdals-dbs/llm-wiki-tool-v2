@@ -100,6 +100,38 @@ class SourceSummarizerTests(unittest.TestCase):
             self.assertIn("PDF page 1", content)
             self.assertIn("PDF page 2", content)
 
+    def test_summary_prefers_substantive_evidence_over_markdown_chrome(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            domain = load_domain_config(write_domain(root), root=root)
+            raw_file = root / "raw" / "valuation.md"
+            raw_file.parent.mkdir()
+            raw_file.write_text(
+                "\n".join(
+                    [
+                        "# Memo",
+                        "",
+                        "## 잡담",
+                        "이 문서는 수업 전에 적은 짧은 안내다.",
+                        "",
+                        "## DCF",
+                        "DCF는 미래 현금흐름을 현재가치로 할인해 기업가치를 추정하는 방법이다.",
+                        "할인율은 현금흐름의 위험과 자본비용을 반영한다.",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            scan_raw_sources(domain)
+
+            result = summarize_new_sources(domain)
+
+            self.assertEqual(result.summarized_count, 1)
+            content = (root / "wiki" / "sources" / "valuation.md").read_text(encoding="utf-8")
+            self.assertIn("## Candidate Concept Evidence", content)
+            self.assertIn("DCF: DCF는 미래 현금흐름을 현재가치로 할인해 기업가치를 추정하는 방법이다.", content)
+            self.assertIn("할인율은 현금흐름의 위험과 자본비용을 반영한다.", content)
+            self.assertNotIn("# Memo", content.split("## Summary", 1)[1].split("## Key Points", 1)[0])
+
 
 if __name__ == "__main__":
     unittest.main()

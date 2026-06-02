@@ -23,7 +23,7 @@ def review_source_quality(
     visual_notes: list[str],
 ) -> QualityReview:
     substantive_count = _substantive_sentence_count(text)
-    concept_evidence_count = len(candidate_concepts) if substantive_count else 0
+    concept_evidence_count = _concept_evidence_count(text, candidate_concepts) if substantive_count else 0
     merged_warnings = list(warnings)
     merged_actions = list(recommended_actions)
 
@@ -33,9 +33,11 @@ def review_source_quality(
             merged_actions.append("manual_review")
     if not candidate_concepts:
         merged_warnings.append("개념 후보가 없습니다.")
+    elif concept_evidence_count == 0:
+        merged_warnings.append("개념 후보를 뒷받침하는 본문 근거가 부족합니다.")
 
     quality = "usable"
-    if substantive_count == 0 or not candidate_concepts or recommended_actions:
+    if substantive_count == 0 or not candidate_concepts or concept_evidence_count == 0 or recommended_actions:
         quality = "weak"
 
     return QualityReview(
@@ -52,3 +54,13 @@ def review_source_quality(
 def _substantive_sentence_count(text: str) -> int:
     sentences = [part.strip() for part in text.replace("\n", " ").split(".")]
     return sum(1 for sentence in sentences if len(sentence) >= 10)
+
+
+def _concept_evidence_count(text: str, candidate_concepts: list[str]) -> int:
+    normalized_text = text.casefold()
+    count = 0
+    for concept in candidate_concepts:
+        normalized = concept.casefold().strip()
+        if normalized and normalized in normalized_text:
+            count += 1
+    return count

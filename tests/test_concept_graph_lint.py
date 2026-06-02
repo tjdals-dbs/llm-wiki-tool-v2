@@ -117,7 +117,7 @@ class ConceptGraphLintTests(unittest.TestCase):
             result = organize_pending_sources(domain)
 
             self.assertEqual(result.promoted_count, 0)
-            self.assertEqual(result.dropped_count, 1)
+            self.assertEqual(result.skipped_count, 1)
 
     def test_lint_reports_concept_without_source_evidence(self):
         with tempfile.TemporaryDirectory() as tmp:

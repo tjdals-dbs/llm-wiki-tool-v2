@@ -195,4 +195,7 @@ def _is_generic_concept(value: str) -> bool:
         "source",
         "document",
         "문서",
+        "이 문서",
+        "이 자료",
+        "자료",
     }
