@@ -85,28 +85,43 @@ class WikiToolAdapter:
 
     def answer_question(self, query: str) -> dict[str, Any]:
         context = self.ask_wiki_context(query, limit=5)
-        if not context:
+        evidence = self._collect_answer_evidence(query, context)
+        if not evidence:
             return {
                 "status": "no_evidence",
                 "answer": "근거가 부족합니다. 현재 wiki에서 질문에 답할 수 있는 source evidence를 찾지 못했습니다.",
                 "used_pages": [],
                 "related_pages": [],
+                "evidence": [],
             }
 
-        used_pages = [context[0]]
-        related_pages = context[1:]
-        snippets = [item.get("snippet", "") for item in context if item.get("snippet")]
-        evidence_text = " ".join(snippets[:2]).strip()
-        answer = (
-            "wiki 근거를 기준으로 답하면, "
-            + (evidence_text if evidence_text else "관련 page를 확인해야 합니다.")
-        )
+        used_paths = {evidence[0]["path"]}
+        used_pages = [item for item in context if item["path"] in used_paths]
+        related_pages = [item for item in context if item["path"] not in used_paths]
+        answer = _compose_evidence_answer(evidence)
         return {
             "status": "ok",
             "answer": answer,
             "used_pages": used_pages,
             "related_pages": related_pages,
+            "evidence": evidence,
         }
+
+    def _collect_answer_evidence(self, query: str, context: list[dict[str, Any]]) -> list[dict[str, str]]:
+        query_terms = _query_terms(query)
+        collected: list[dict[str, str]] = []
+        for page in context:
+            content = self.read_wiki_page(page["path"])
+            for evidence_text in _extract_page_evidence(content, page["type"], query_terms):
+                collected.append(
+                    {
+                        "path": page["path"],
+                        "type": page["type"],
+                        "title": page["title"],
+                        "text": evidence_text,
+                    }
+                )
+        return _dedupe_evidence(collected)[:5]
 
     def scan_raw_sources(self) -> dict[str, Any]:
         result = core_scan_raw_sources(self.config)
@@ -128,6 +143,7 @@ class WikiToolAdapter:
         answer: str,
         used_pages: list[dict[str, Any]] | None = None,
         related_pages: list[dict[str, Any]] | None = None,
+        evidence: list[dict[str, Any]] | None = None,
         status: str = "ok",
     ) -> dict[str, str]:
         answer_dir = self.config.wiki_dir / "answers"
@@ -139,6 +155,7 @@ class WikiToolAdapter:
                 answer=answer,
                 used_pages=used_pages or [],
                 related_pages=related_pages or [],
+                evidence=evidence or [],
                 status=status,
             ),
             encoding="utf-8",
@@ -189,6 +206,96 @@ def _snippet(content: str, query: str) -> str:
     return compact[start:end]
 
 
+def _extract_page_evidence(content: str, page_type: str, query_terms: list[str]) -> list[str]:
+    section_order = ["Source Evidence", "Evidence", "Definition", "Summary"]
+    candidates: list[str] = []
+    for heading in section_order:
+        candidates.extend(_section_values(content, heading))
+    if not candidates and page_type in {"concept", "source"}:
+        candidates.append(_first_nonempty_line(content))
+
+    ranked = sorted(
+        _dedupe_text(candidates),
+        key=lambda item: (-_evidence_score(item, query_terms), len(item)),
+    )
+    return [_clean_evidence(item) for item in ranked if _evidence_score(item, query_terms) > 0][:3]
+
+
+def _section_values(content: str, heading: str) -> list[str]:
+    values: list[str] = []
+    for line in _section_lines(content, heading):
+        if line.startswith("- "):
+            value = line[2:].strip()
+            if value != "없음" and not value.startswith("["):
+                values.append(value)
+        elif line.strip() and not line.startswith("## "):
+            values.append(line.strip())
+    return values
+
+
+def _section_lines(content: str, heading: str) -> list[str]:
+    marker = f"## {heading}"
+    lines = content.splitlines()
+    collected: list[str] = []
+    in_section = False
+    for line in lines:
+        if line.strip() == marker:
+            in_section = True
+            continue
+        if in_section and line.startswith("## "):
+            break
+        if in_section and line.strip():
+            collected.append(line.strip())
+    return collected
+
+
+def _evidence_score(value: str, query_terms: list[str]) -> int:
+    normalized = value.casefold()
+    score = sum(4 for term in query_terms if term.casefold() in normalized)
+    if "source evidence" in normalized:
+        score -= 1
+    if len(value) >= 12:
+        score += 1
+    return score
+
+
+def _clean_evidence(value: str) -> str:
+    return re.sub(r"\s+", " ", value).strip()
+
+
+def _dedupe_text(items: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for item in items:
+        cleaned = _clean_evidence(item)
+        key = cleaned.casefold()
+        if not cleaned or key in seen:
+            continue
+        seen.add(key)
+        result.append(cleaned)
+    return result
+
+
+def _dedupe_evidence(items: list[dict[str, str]]) -> list[dict[str, str]]:
+    seen: set[tuple[str, str]] = set()
+    result: list[dict[str, str]] = []
+    for item in items:
+        key = (item["path"], item["text"].casefold())
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(item)
+    return result
+
+
+def _compose_evidence_answer(evidence: list[dict[str, str]]) -> str:
+    primary = evidence[0]["text"]
+    if len(evidence) == 1:
+        return f"wiki 근거를 기준으로 답하면, {primary}"
+    secondary = evidence[1]["text"]
+    return f"wiki 근거를 기준으로 답하면, {primary} 추가 근거로 {secondary}"
+
+
 def _query_terms(query: str) -> list[str]:
     terms: list[str] = []
     for raw_term in re.findall(r"[0-9A-Za-z가-힣]+", query.lower()):
@@ -220,6 +327,7 @@ def _render_answer_page(
     answer: str,
     used_pages: list[dict[str, Any]],
     related_pages: list[dict[str, Any]],
+    evidence: list[dict[str, Any]],
     status: str,
 ) -> str:
     return "\n".join(
@@ -233,6 +341,10 @@ def _render_answer_page(
             "## Used Pages",
             "",
             _page_bullets(used_pages),
+            "",
+            "## Evidence",
+            "",
+            _evidence_bullets(evidence),
             "",
             "## Related Pages",
             "",
@@ -250,6 +362,16 @@ def _page_bullets(pages: list[dict[str, Any]]) -> str:
     if not pages:
         return "- 없음"
     return "\n".join(f"- {page.get('path', '')}" for page in pages if page.get("path"))
+
+
+def _evidence_bullets(evidence: list[dict[str, Any]]) -> str:
+    if not evidence:
+        return "- 없음"
+    return "\n".join(
+        f"- {item.get('path', '')}: {item.get('text', '')}"
+        for item in evidence
+        if item.get("path") and item.get("text")
+    )
 
 
 def _slug(value: str) -> str:

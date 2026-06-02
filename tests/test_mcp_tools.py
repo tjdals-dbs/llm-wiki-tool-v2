@@ -82,6 +82,7 @@ class McpToolAdapterTests(unittest.TestCase):
                 answer="CAPM은 기대수익률과 체계적 위험의 관계를 설명하는 모델입니다.",
                 used_pages=[{"path": "wiki/concepts/capm.md"}],
                 related_pages=[{"path": "wiki/sources/capm.md"}],
+                evidence=[{"path": "wiki/concepts/capm.md", "text": "CAPM은 기대수익률과 체계적 위험을 연결한다."}],
                 status="ok",
             )
 
@@ -89,8 +90,10 @@ class McpToolAdapterTests(unittest.TestCase):
             content = answer_path.read_text(encoding="utf-8")
             self.assertIn("## Answer", content)
             self.assertIn("## Used Pages", content)
+            self.assertIn("## Evidence", content)
             self.assertIn("## Related Pages", content)
             self.assertIn("wiki/concepts/capm.md", content)
+            self.assertIn("체계적 위험", content)
 
     def test_pipeline_tool_methods_return_korean_status_counts(self):
         with tempfile.TemporaryDirectory() as tmp:

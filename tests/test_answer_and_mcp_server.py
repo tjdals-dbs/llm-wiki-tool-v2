@@ -64,6 +64,8 @@ class AnswerAndMcpServerTests(unittest.TestCase):
             self.assertIn("wiki 근거", answer["answer"])
             self.assertTrue(answer["used_pages"])
             self.assertTrue(answer["related_pages"])
+            self.assertTrue(answer["evidence"])
+            self.assertIn("CAPM", answer["evidence"][0]["text"])
             self.assertNotIn("## Used Pages", answer["answer"])
 
     def test_answer_question_admits_when_evidence_is_missing(self):
@@ -77,6 +79,7 @@ class AnswerAndMcpServerTests(unittest.TestCase):
             self.assertEqual(answer["status"], "no_evidence")
             self.assertIn("근거가 부족합니다", answer["answer"])
             self.assertEqual(answer["used_pages"], [])
+            self.assertEqual(answer["evidence"], [])
 
     def test_register_mcp_tools_exposes_adapter_methods_on_server(self):
         with tempfile.TemporaryDirectory() as tmp:
