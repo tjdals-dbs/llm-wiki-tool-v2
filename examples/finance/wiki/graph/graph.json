@@ -1,0 +1,23 @@
+{
+  "nodes": [
+    {
+      "id": "wiki/concepts/capm.md",
+      "path": "wiki/concepts/capm.md",
+      "label": "CAPM",
+      "type": "concept"
+    },
+    {
+      "id": "wiki/sources/capm.md",
+      "path": "wiki/sources/capm.md",
+      "label": "CAPM",
+      "type": "source"
+    }
+  ],
+  "edges": [
+    {
+      "from": "wiki/concepts/capm.md",
+      "to": "wiki/sources/capm.md",
+      "type": "derived_from"
+    }
+  ]
+}
