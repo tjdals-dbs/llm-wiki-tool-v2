@@ -7,14 +7,14 @@ __pycache__/
 venv/
 
 # Raw source privacy boundary. Public-safe samples should live under examples/.
-raw/private/
-raw/**/*.pdf
-raw/**/*.zip
-raw/**/*.png
-raw/**/*.jpg
-raw/**/*.jpeg
-raw/**/*.html
+/raw/private/
+/raw/**/*.pdf
+/raw/**/*.zip
+/raw/**/*.png
+/raw/**/*.jpg
+/raw/**/*.jpeg
+/raw/**/*.html
 
 # Local generated state for private domains.
-manifests/
-wiki/
+/manifests/
+/wiki/
