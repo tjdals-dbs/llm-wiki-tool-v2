@@ -34,11 +34,12 @@ def organize_pending_sources(config: DomainConfig, limit: int | None = None) -> 
 
         source_page = _safe_wiki_path(config, entry.source_page)
         source = _parse_source_summary(source_page)
-        if source.quality != "usable" or not source.candidate_concepts:
+        candidate_concepts = [concept for concept in source.candidate_concepts if not _is_generic_concept(concept)]
+        if source.quality != "usable" or not candidate_concepts:
             dropped_count += 1
             continue
 
-        concept_name = source.candidate_concepts[0]
+        concept_name = candidate_concepts[0]
         concept_path = config.wiki_dir / "concepts" / f"{_slug(concept_name)}.md"
         source_link = f"[{Path(entry.source_page).stem}](../sources/{Path(entry.source_page).name})"
         if concept_path.exists():
@@ -180,3 +181,18 @@ def _quality(content: str) -> str:
 def _slug(value: str) -> str:
     normalized = re.sub(r"[^0-9A-Za-z가-힣_-]+", "-", value).strip("-").lower()
     return normalized or "concept"
+
+
+def _is_generic_concept(value: str) -> bool:
+    normalized = value.strip().lower()
+    return normalized in {
+        "note",
+        "notes",
+        "memo",
+        "메모",
+        "일반 메모",
+        "untitled",
+        "source",
+        "document",
+        "문서",
+    }

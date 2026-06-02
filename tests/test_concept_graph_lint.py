@@ -83,6 +83,42 @@ class ConceptGraphLintTests(unittest.TestCase):
             self.assertEqual(result.promoted_count, 0)
             self.assertEqual(list((root / "wiki" / "concepts").glob("*.md")), [])
 
+    def test_existing_concept_is_merged_instead_of_duplicated(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            domain = load_domain_config(write_domain(root), root=root)
+            raw_dir = root / "raw"
+            raw_dir.mkdir()
+            (raw_dir / "first.md").write_text("# CAPM\nCAPM은 기대수익률과 위험을 연결한다.", encoding="utf-8")
+            (raw_dir / "second.md").write_text("# CAPM\nCAPM은 베타와도 연결된다.", encoding="utf-8")
+            scan_raw_sources(domain)
+            summarize_new_sources(domain)
+
+            first = organize_pending_sources(domain, limit=1)
+            second = organize_pending_sources(domain, limit=1)
+
+            self.assertEqual(first.promoted_count, 1)
+            self.assertEqual(second.merged_count, 1)
+            self.assertEqual(len(list((root / "wiki" / "concepts").glob("capm*.md"))), 1)
+            content = (root / "wiki" / "concepts" / "capm.md").read_text(encoding="utf-8")
+            self.assertIn("[first](../sources/first.md)", content)
+            self.assertIn("[second](../sources/second.md)", content)
+
+    def test_generic_candidate_concept_is_not_promoted(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            domain = load_domain_config(write_domain(root), root=root)
+            raw_file = root / "raw" / "notes.md"
+            raw_file.parent.mkdir()
+            raw_file.write_text("# Notes\n이 문서는 일반적인 메모이며 명확한 개념 후보가 없다.", encoding="utf-8")
+            scan_raw_sources(domain)
+            summarize_new_sources(domain)
+
+            result = organize_pending_sources(domain)
+
+            self.assertEqual(result.promoted_count, 0)
+            self.assertEqual(result.dropped_count, 1)
+
     def test_lint_reports_concept_without_source_evidence(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
