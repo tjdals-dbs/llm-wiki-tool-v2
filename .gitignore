@@ -13,7 +13,26 @@ venv/
 /raw/**/*.png
 /raw/**/*.jpg
 /raw/**/*.jpeg
+/raw/**/*.gif
+/raw/**/*.webp
 /raw/**/*.html
+/raw/**/*.htm
+/raw/**/*.env
+/raw/**/*.key
+
+# Example raw folders may only contain public-safe text fixtures.
+/examples/**/raw/private/
+/examples/**/raw/**/*.pdf
+/examples/**/raw/**/*.zip
+/examples/**/raw/**/*.png
+/examples/**/raw/**/*.jpg
+/examples/**/raw/**/*.jpeg
+/examples/**/raw/**/*.gif
+/examples/**/raw/**/*.webp
+/examples/**/raw/**/*.html
+/examples/**/raw/**/*.htm
+/examples/**/raw/**/*.env
+/examples/**/raw/**/*.key
 
 # Local generated state for private domains.
 /manifests/

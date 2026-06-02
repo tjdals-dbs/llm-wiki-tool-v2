@@ -32,4 +32,9 @@ python scripts/lint_wiki.py --domain examples/finance/domain.yml
 
 ## 개인정보 경계
 
-공개 저장소에는 private raw 자료, PDF 원본, 이미지 원본, API key, local runtime state를 포함하지 않습니다. public-safe 예제는 `examples/` 아래에만 둡니다.
+공개 저장소에는 private raw 자료, PDF 원본, 이미지 원본, HTML 원본, API key, local runtime state를 포함하지 않습니다.
+
+- 실제 개인 자료는 루트 `raw/` 또는 도메인별 `raw/`에 두되 커밋하지 않습니다.
+- `raw/private/`와 `examples/**/raw/private/`는 스캔 및 공개 예제 경계 밖으로 취급합니다.
+- `examples/**/raw/`에는 public-safe 텍스트 fixture만 둡니다. PDF, 이미지, HTML, key/env 파일은 예제 raw에도 커밋하지 않습니다.
+- 공개 예제 wiki는 public-safe raw fixture에서 생성된 결과만 포함합니다.
