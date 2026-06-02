@@ -1,9 +1,10 @@
 import tempfile
 import unittest
+import asyncio
 from pathlib import Path
 
 from wiki_tool.config import load_domain_config
-from wiki_tool.mcp_server import register_mcp_tools
+from wiki_tool.mcp_server import create_fastmcp_server, register_mcp_tools
 from wiki_tool.mcp_tools import WikiToolAdapter
 from wiki_tool.scanner import scan_raw_sources
 from wiki_tool.summarizer import summarize_new_sources
@@ -88,6 +89,19 @@ class AnswerAndMcpServerTests(unittest.TestCase):
             self.assertIn("list_wiki_pages", server.tools)
             self.assertIn("answer_question", server.tools)
             self.assertEqual(set(registered), set(server.tools))
+
+    def test_create_fastmcp_server_registers_required_tools(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            domain = load_domain_config(write_domain(root), root=root)
+
+            server = create_fastmcp_server(domain)
+            tools = asyncio.run(server.list_tools())
+            tool_names = {tool.name for tool in tools}
+
+            self.assertIn("list_wiki_pages", tool_names)
+            self.assertIn("scan_raw_sources", tool_names)
+            self.assertIn("answer_question", tool_names)
 
 
 if __name__ == "__main__":

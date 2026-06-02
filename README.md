@@ -18,6 +18,7 @@ Markdown 기반 LLM Wiki 유지보수 도구입니다. 사용자는 자료를 `r
 ```powershell
 python scripts/wiki_tool.py --domain examples/finance/domain.yml pipeline
 python scripts/lint_wiki.py --domain examples/finance/domain.yml
+python scripts/run_mcp_server.py --domain examples/finance/domain.yml --transport stdio
 python scripts/run_desktop_gui.py --domain examples/finance/domain.yml
 ```
 

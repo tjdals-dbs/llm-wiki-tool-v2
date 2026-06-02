@@ -12,3 +12,11 @@ def register_mcp_tools(server: Any, config: DomainConfig) -> dict[str, Callable[
     for name, fn in registry.items():
         server.tool(name=name)(fn)
     return registry
+
+
+def create_fastmcp_server(config: DomainConfig) -> Any:
+    from mcp.server.fastmcp import FastMCP
+
+    server = FastMCP(f"llm-wiki-{config.slug}")
+    register_mcp_tools(server, config)
+    return server
