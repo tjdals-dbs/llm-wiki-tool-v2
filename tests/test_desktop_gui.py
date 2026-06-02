@@ -1,0 +1,58 @@
+import unittest
+
+from wiki_tool.desktop_gui import GUI_ACTION_LABELS, GUI_PANEL_TITLES, DesktopGuiPresenter
+
+
+class FakeAdapter:
+    def __init__(self):
+        self.calls = []
+
+    def scan_raw_sources(self):
+        self.calls.append("scan")
+        return {"new_count": 1, "changed_count": 0, "ignored_count": 0}
+
+    def summarize_new_sources(self):
+        self.calls.append("summarize")
+        return {"summarized_count": 1, "needs_review_count": 0}
+
+    def organize_pending_sources(self):
+        self.calls.append("organize")
+        return {"promoted_count": 1, "merged_count": 0, "dropped_count": 0}
+
+    def run_wiki_lint(self):
+        self.calls.append("lint")
+        return {"ok": True, "issues": []}
+
+    def ask_wiki_context(self, query, limit=5):
+        self.calls.append(("context", query, limit))
+        return [{"path": "wiki/concepts/capm.md", "title": "CAPM"}]
+
+
+class DesktopGuiTests(unittest.TestCase):
+    def test_korean_three_panel_labels_do_not_offer_upload_ux(self):
+        labels = " ".join(GUI_PANEL_TITLES + GUI_ACTION_LABELS)
+
+        self.assertIn("위키 페이지", labels)
+        self.assertIn("선택한 페이지", labels)
+        self.assertIn("에이전트 제어", labels)
+        self.assertIn("raw 스캔", labels)
+        self.assertIn("새 source 요약", labels)
+        self.assertIn("pending concept 조직", labels)
+        self.assertNotIn("upload", labels.lower())
+        self.assertNotIn("dropzone", labels.lower())
+        self.assertNotIn("파일 업로드", labels)
+
+    def test_presenter_returns_korean_status_messages_for_agent_actions(self):
+        adapter = FakeAdapter()
+        presenter = DesktopGuiPresenter(adapter)
+
+        self.assertIn("raw 스캔 완료", presenter.scan_raw_sources())
+        self.assertIn("source 요약 완료", presenter.summarize_new_sources())
+        self.assertIn("concept 조직 완료", presenter.organize_pending_sources())
+        self.assertIn("lint 통과", presenter.run_wiki_lint())
+        self.assertIn("wiki/concepts/capm.md", presenter.ask_agent("CAPM"))
+        self.assertEqual(adapter.calls[:4], ["scan", "summarize", "organize", "lint"])
+
+
+if __name__ == "__main__":
+    unittest.main()

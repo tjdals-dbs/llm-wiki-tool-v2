@@ -1,0 +1,178 @@
+from __future__ import annotations
+
+from typing import Any
+
+from .config import DomainConfig
+from .mcp_tools import WikiToolAdapter
+
+
+GUI_PANEL_TITLES = ["위키 페이지", "선택한 페이지", "에이전트 제어"]
+GUI_ACTION_LABELS = ["raw 스캔", "새 source 요약", "pending concept 조직", "wiki lint", "에이전트에게 질문"]
+
+
+class DesktopGuiPresenter:
+    def __init__(self, adapter: Any) -> None:
+        self.adapter = adapter
+
+    def scan_raw_sources(self) -> str:
+        result = self.adapter.scan_raw_sources()
+        return (
+            "raw 스캔 완료: "
+            f"새 파일 {result.get('new_count', 0)}개, "
+            f"변경 {result.get('changed_count', 0)}개, "
+            f"무시 {result.get('ignored_count', 0)}개"
+        )
+
+    def summarize_new_sources(self) -> str:
+        result = self.adapter.summarize_new_sources()
+        return (
+            "source 요약 완료: "
+            f"요약 {result.get('summarized_count', 0)}개, "
+            f"검토 필요 {result.get('needs_review_count', 0)}개"
+        )
+
+    def organize_pending_sources(self) -> str:
+        result = self.adapter.organize_pending_sources()
+        return (
+            "concept 조직 완료: "
+            f"승격 {result.get('promoted_count', 0)}개, "
+            f"병합 {result.get('merged_count', 0)}개, "
+            f"보류 {result.get('dropped_count', 0)}개"
+        )
+
+    def run_wiki_lint(self) -> str:
+        result = self.adapter.run_wiki_lint()
+        if result.get("ok"):
+            return "wiki lint 통과"
+        issues = result.get("issues", [])
+        return "wiki lint 경고:\n" + "\n".join(f"- {item['path']}: {item['message']}" for item in issues)
+
+    def ask_agent(self, query: str) -> str:
+        if not query.strip():
+            return "질문을 입력하세요."
+        context = self.adapter.ask_wiki_context(query, limit=5)
+        if not context:
+            return "근거가 충분하지 않습니다. 관련 wiki page를 찾지 못했습니다."
+        lines = ["근거 page:"]
+        for item in context:
+            lines.append(f"- {item['path']}: {item.get('title', '')}")
+        return "\n".join(lines)
+
+
+class DesktopWikiApp:
+    def __init__(self, config: DomainConfig) -> None:
+        import tkinter as tk
+        from tkinter import ttk
+
+        self.tk = tk
+        self.ttk = ttk
+        self.adapter = WikiToolAdapter(config)
+        self.presenter = DesktopGuiPresenter(self.adapter)
+        self.root = tk.Tk()
+        self.root.title("LLM Wiki Tool v2")
+        self.root.geometry("1180x720")
+
+        self.search_var = tk.StringVar()
+        self.question_var = tk.StringVar()
+        self.page_items: dict[str, str] = {}
+
+        self._build_layout()
+        self.refresh_pages()
+
+    def run(self) -> None:
+        self.root.mainloop()
+
+    def _build_layout(self) -> None:
+        ttk = self.ttk
+        tk = self.tk
+        main = ttk.PanedWindow(self.root, orient=tk.HORIZONTAL)
+        main.pack(fill=tk.BOTH, expand=True)
+
+        left = ttk.Frame(main, padding=8)
+        center = ttk.Frame(main, padding=8)
+        right = ttk.Frame(main, padding=8)
+        main.add(left, weight=1)
+        main.add(center, weight=3)
+        main.add(right, weight=2)
+
+        ttk.Label(left, text=GUI_PANEL_TITLES[0]).pack(anchor=tk.W)
+        search_row = ttk.Frame(left)
+        search_row.pack(fill=tk.X, pady=(6, 6))
+        ttk.Entry(search_row, textvariable=self.search_var).pack(side=tk.LEFT, fill=tk.X, expand=True)
+        ttk.Button(search_row, text="검색", command=self.refresh_pages).pack(side=tk.LEFT, padx=(6, 0))
+        self.page_tree = ttk.Treeview(left, columns=("type",), show="tree headings", height=28)
+        self.page_tree.heading("#0", text="page")
+        self.page_tree.heading("type", text="type")
+        self.page_tree.pack(fill=tk.BOTH, expand=True)
+        self.page_tree.bind("<<TreeviewSelect>>", self._on_page_selected)
+
+        ttk.Label(center, text=GUI_PANEL_TITLES[1]).pack(anchor=tk.W)
+        self.content_text = tk.Text(center, wrap=tk.WORD, height=30)
+        self.content_text.pack(fill=tk.BOTH, expand=True, pady=(6, 6))
+        ttk.Label(center, text="주변 graph").pack(anchor=tk.W)
+        self.graph_text = tk.Text(center, wrap=tk.WORD, height=8)
+        self.graph_text.pack(fill=tk.BOTH, expand=False)
+
+        ttk.Label(right, text=GUI_PANEL_TITLES[2]).pack(anchor=tk.W)
+        for label, command in [
+            ("raw 스캔", self._scan),
+            ("새 source 요약", self._summarize),
+            ("pending concept 조직", self._organize),
+            ("wiki lint", self._lint),
+        ]:
+            ttk.Button(right, text=label, command=command).pack(fill=tk.X, pady=(6, 0))
+
+        ttk.Label(right, text="질문").pack(anchor=tk.W, pady=(16, 2))
+        ttk.Entry(right, textvariable=self.question_var).pack(fill=tk.X)
+        ttk.Button(right, text="에이전트에게 질문", command=self._ask).pack(fill=tk.X, pady=(6, 6))
+        self.agent_text = tk.Text(right, wrap=tk.WORD, height=22)
+        self.agent_text.pack(fill=tk.BOTH, expand=True)
+
+    def refresh_pages(self) -> None:
+        query = self.search_var.get().strip()
+        pages = self.adapter.search_wiki(query, limit=100) if query else self.adapter.list_wiki_pages()
+        self.page_tree.delete(*self.page_tree.get_children())
+        self.page_items.clear()
+        for page in pages:
+            item_id = self.page_tree.insert("", "end", text=page["path"], values=(page["type"],))
+            self.page_items[item_id] = page["path"]
+
+    def _on_page_selected(self, _event: object) -> None:
+        selected = self.page_tree.selection()
+        if not selected:
+            return
+        path = self.page_items[selected[0]]
+        self._set_text(self.content_text, self.adapter.read_wiki_page(path))
+        related = self.adapter.get_related_pages(path, depth=1)
+        graph_lines = [f"- {item['path']} ({item['type']})" for item in related] or ["- 주변 page 없음"]
+        self._set_text(self.graph_text, "\n".join(graph_lines))
+
+    def _scan(self) -> None:
+        self._set_agent_status(self.presenter.scan_raw_sources())
+        self.refresh_pages()
+
+    def _summarize(self) -> None:
+        self._set_agent_status(self.presenter.summarize_new_sources())
+        self.refresh_pages()
+
+    def _organize(self) -> None:
+        self._set_agent_status(self.presenter.organize_pending_sources())
+        self.refresh_pages()
+
+    def _lint(self) -> None:
+        self._set_agent_status(self.presenter.run_wiki_lint())
+
+    def _ask(self) -> None:
+        self._set_agent_status(self.presenter.ask_agent(self.question_var.get()))
+
+    def _set_agent_status(self, message: str) -> None:
+        self._set_text(self.agent_text, message)
+
+    def _set_text(self, widget: Any, value: str) -> None:
+        widget.delete("1.0", self.tk.END)
+        widget.insert(self.tk.END, value)
+
+
+def run_desktop_gui(config: DomainConfig) -> None:
+    app = DesktopWikiApp(config)
+    app.run()
