@@ -132,6 +132,40 @@ class SourceSummarizerTests(unittest.TestCase):
             self.assertIn("할인율은 현금흐름의 위험과 자본비용을 반영한다.", content)
             self.assertNotIn("# Memo", content.split("## Summary", 1)[1].split("## Key Points", 1)[0])
 
+    def test_markdown_frontmatter_stays_out_of_reader_facing_summary(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            domain = load_domain_config(write_domain(root), root=root)
+            raw_file = root / "raw" / "frontmatter.md"
+            raw_file.parent.mkdir()
+            raw_file.write_text(
+                "\n".join(
+                    [
+                        "---",
+                        "source_path: private/lecture.pdf",
+                        "sha256: should-not-appear-in-summary",
+                        "tool_trace: extractor-v1",
+                        "---",
+                        "# 듀레이션",
+                        "듀레이션은 금리 변화에 대한 채권 가격의 민감도를 설명하는 개념이다.",
+                        "만기가 길고 쿠폰이 낮을수록 듀레이션은 커지는 경향이 있다.",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            scan_raw_sources(domain)
+
+            result = summarize_new_sources(domain)
+
+            self.assertEqual(result.summarized_count, 1)
+            content = (root / "wiki" / "sources" / "frontmatter.md").read_text(encoding="utf-8")
+            reader_body = content.split("## Quality Review", 1)[0]
+            self.assertIn("## Summary", reader_body)
+            self.assertIn("듀레이션은 금리 변화", reader_body)
+            self.assertNotIn("source_path", reader_body)
+            self.assertNotIn("tool_trace", reader_body)
+            self.assertLess(content.index("## Summary"), content.index("## Source Metadata"))
+
 
 if __name__ == "__main__":
     unittest.main()

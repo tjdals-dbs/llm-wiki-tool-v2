@@ -194,13 +194,6 @@ def _render_source_page(
         [
             f"# {extracted.title}",
             "",
-            "## Source Metadata",
-            "",
-            f"- Raw path: {entry.path}",
-            f"- SHA256: {entry.sha256}",
-            f"- Source type: {entry.source_type}",
-            f"- Ingest status: {quality.quality}",
-            "",
             "## Summary",
             "",
             analysis.summary,
@@ -234,6 +227,13 @@ def _render_source_page(
             f"- concept_evidence_count: {quality.concept_evidence_count}",
             f"- substantive_content_count: {quality.substantive_content_count}",
             f"- visual_summary_count: {quality.visual_summary_count}",
+            "",
+            "## Source Metadata",
+            "",
+            f"- Raw path: {entry.path}",
+            f"- SHA256: {entry.sha256}",
+            f"- Source type: {entry.source_type}",
+            f"- Ingest status: {quality.quality}",
             "",
         ]
     )
@@ -291,8 +291,16 @@ def _sentences(text: str) -> list[str]:
 def _readable_text(text: str) -> str:
     lines: list[str] = []
     in_code_block = False
+    in_frontmatter = False
     for raw_line in text.splitlines():
         line = raw_line.strip()
+        if in_frontmatter:
+            if line == "---":
+                in_frontmatter = False
+            continue
+        if not lines and line == "---":
+            in_frontmatter = True
+            continue
         if line.startswith("```"):
             in_code_block = not in_code_block
             continue
