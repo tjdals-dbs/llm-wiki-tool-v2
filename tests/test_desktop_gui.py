@@ -1,4 +1,6 @@
 import unittest
+import tempfile
+from pathlib import Path
 
 from wiki_tool.desktop_gui import (
     GUI_ACTION_LABELS,
@@ -183,19 +185,86 @@ class DesktopGuiTests(unittest.TestCase):
 
         status = presenter.run_maintenance_workflow()
 
-        self.assertIn("maintenance 완료", status)
-        self.assertIn("새 raw source: 1", status)
-        self.assertIn("갱신된 source: 1", status)
-        self.assertIn("needs_review source: 0", status)
-        self.assertIn("promoted concept: 1", status)
-        self.assertIn("merged concept: 0", status)
-        self.assertIn("agent provider: source=codex, concept=codex", status)
-        self.assertIn("Codex 사용: source 1개, concept 1개", status)
-        self.assertIn("fallback: source 0개, concept 1개", status)
-        self.assertIn("lint: 통과", status)
-        self.assertIn("agent 사용: source Codex 1개/fallback 0개, concept Codex 1개/fallback 1개", status)
-        self.assertIn("graph 갱신: node 2개, edge 0개", status)
+        self.assertIn("Maintenance Run Report", status)
+        self.assertIn("상태: fallback 포함 성공", status)
+        self.assertIn("raw scan: 신규 1개, 변경 0개, 유지 0개, 제외 0개", status)
+        self.assertIn("source summary: provider codex, 요약 1개, Codex 1개, fallback 0개, 검토 필요 0개", status)
+        self.assertIn("concept organize: provider codex, 승격 1개, 병합 0개, 건너뜀 0개, Codex 1개, fallback 1개", status)
+        self.assertIn("lint: 통과, issue 0개", status)
+        self.assertIn("안전성: raw 불변성 확인 불가, lint 통과, fallback 발생", status)
+        self.assertIn("산출물: source 1개, concept 변경 1개, graph node 2개, edge 0개", status)
+        self.assertIn("원인:", status)
+        self.assertIn("concept organize fallback 1개: Codex draft 검증 실패 또는 실행 오류로 rule-based 조직 사용", status)
         self.assertEqual(adapter.calls, ["scan", "summarize", "organize", "graph", "lint"])
+
+    def test_maintenance_report_marks_success_when_every_stage_passes(self):
+        adapter = FakeAdapter()
+        adapter.scan_raw_sources = lambda: adapter.calls.append("scan") or {
+            "scanned_count": 9,
+            "new_count": 1,
+            "changed_count": 0,
+            "ignored_count": 0,
+        }
+        adapter.organize_pending_sources = lambda: adapter.calls.append("organize") or {
+            "provider": "codex",
+            "promoted_count": 4,
+            "merged_count": 2,
+            "skipped_count": 0,
+            "codex_used_count": 4,
+            "fallback_count": 0,
+        }
+        presenter = DesktopGuiPresenter(adapter)
+
+        status = presenter.run_maintenance_workflow()
+
+        self.assertIn("상태: 성공", status)
+        self.assertIn("raw scan: 신규 1개, 변경 0개, 유지 8개, 제외 0개", status)
+        self.assertIn("concept organize: provider codex, 승격 4개, 병합 2개", status)
+        self.assertIn("fallback 없음", status)
+        self.assertNotIn("{", status)
+        self.assertNotIn("}", status)
+
+    def test_maintenance_report_marks_lint_failure_with_short_issues(self):
+        adapter = FakeAdapter()
+        adapter.run_wiki_lint = lambda: adapter.calls.append("lint") or {
+            "ok": False,
+            "issues": [
+                {
+                    "path": "wiki/concepts/very/deep/private/capm.md",
+                    "message": "broken link 시장위험프리미엄.md",
+                },
+                {"path": "wiki/sources/foo.md", "message": "missing evidence"},
+            ],
+        }
+        presenter = DesktopGuiPresenter(adapter)
+
+        status = presenter.run_maintenance_workflow()
+
+        self.assertIn("상태: 실패", status)
+        self.assertIn("lint: 실패, issue 2개", status)
+        self.assertIn("문제:", status)
+        self.assertIn("- capm.md: broken link 시장위험프리미엄.md", status)
+        self.assertIn("- foo.md: missing evidence", status)
+        self.assertNotIn("wiki/concepts/very/deep/private/capm.md", status)
+
+    def test_maintenance_report_checks_raw_immutability_when_config_is_available(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            raw_dir = root / "raw"
+            raw_dir.mkdir()
+            (raw_dir / "capm.md").write_text("public safe raw", encoding="utf-8")
+
+            class Config:
+                pass
+
+            adapter = FakeAdapter()
+            adapter.config = Config()
+            adapter.config.raw_dir = raw_dir
+            presenter = DesktopGuiPresenter(adapter)
+
+            status = presenter.run_maintenance_workflow()
+
+        self.assertIn("raw 변경 없음", status)
 
     def test_graph_item_label_uses_short_label_and_tooltip(self):
         label = _graph_item_label(

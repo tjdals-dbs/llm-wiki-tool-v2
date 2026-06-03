@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import math
+from pathlib import Path
 from typing import Any
 
 from .config import DomainConfig
@@ -69,35 +71,14 @@ class DesktopGuiPresenter:
         return "wiki lint 경고:\n" + "\n".join(f"- {item['path']}: {item['message']}" for item in issues)
 
     def run_maintenance_workflow(self) -> str:
+        raw_before = _raw_snapshot(self.adapter)
         scan = self.adapter.scan_raw_sources()
         summarize = self.adapter.summarize_new_sources()
         organize = self.adapter.organize_pending_sources()
         graph = self.adapter.get_wiki_graph()
         lint = self.adapter.run_wiki_lint()
-        lint_status = "통과" if lint.get("ok") else f"경고 {len(lint.get('issues', []))}개"
-        summary_lines = [
-            "maintenance 완료",
-            f"- agent provider: source={summarize.get('provider', 'rule_based')}, concept={organize.get('provider', 'rule_based')}",
-            f"- 새 raw source: {scan.get('new_count', 0)}",
-            f"- 갱신된 source: {summarize.get('summarized_count', 0)}",
-            f"- needs_review source: {summarize.get('needs_review_count', 0)}",
-            f"- promoted concept: {organize.get('promoted_count', 0)}",
-            f"- merged concept: {organize.get('merged_count', 0)}",
-            f"- Codex 사용: source {summarize.get('codex_used_count', 0)}개, concept {organize.get('codex_used_count', 0)}개",
-            f"- fallback: source {summarize.get('fallback_count', 0)}개, concept {organize.get('fallback_count', 0)}개",
-            f"- lint: {lint_status}",
-        ]
-        detail_lines = [
-            "",
-            "세부 로그",
-            f"- raw 변경 감지: 새 {scan.get('new_count', 0)}개, 변경 {scan.get('changed_count', 0)}개, 무시 {scan.get('ignored_count', 0)}개",
-            f"- source 생성: 요약 {summarize.get('summarized_count', 0)}개, 검토 필요 {summarize.get('needs_review_count', 0)}개, 건너뜀 {summarize.get('skipped_count', 0)}개",
-            f"- concept 승격/병합: 승격 {organize.get('promoted_count', 0)}개, 병합 {organize.get('merged_count', 0)}개, 보류 {organize.get('dropped_count', 0)}개",
-            f"- agent 사용: source Codex {summarize.get('codex_used_count', 0)}개/fallback {summarize.get('fallback_count', 0)}개, concept Codex {organize.get('codex_used_count', 0)}개/fallback {organize.get('fallback_count', 0)}개",
-            f"- graph 갱신: node {len(graph.get('nodes', []))}개, edge {len(graph.get('edges', []))}개",
-            f"- lint 상태: {lint_status}",
-        ]
-        return "\n".join(summary_lines + detail_lines)
+        raw_after = _raw_snapshot(self.adapter)
+        return format_maintenance_report(scan, summarize, organize, lint, graph, raw_before=raw_before, raw_after=raw_after)
 
     def wiki_status(self) -> str:
         sources = self.adapter.list_wiki_pages(page_type="source")
@@ -410,6 +391,137 @@ def _quality_value(content: str) -> str:
         if line.startswith("- quality:"):
             return line.split(":", 1)[1].strip()
     return "unknown"
+
+
+def format_maintenance_report(
+    scan: dict[str, Any],
+    summarize: dict[str, Any],
+    organize: dict[str, Any],
+    lint: dict[str, Any],
+    graph: dict[str, Any],
+    *,
+    raw_before: dict[str, str] | None = None,
+    raw_after: dict[str, str] | None = None,
+) -> str:
+    lint_issues = lint.get("issues", []) or []
+    source_fallback = int(summarize.get("fallback_count", 0) or 0)
+    concept_fallback = int(organize.get("fallback_count", 0) or 0)
+    fallback_count = source_fallback + concept_fallback
+    raw_integrity = _raw_integrity_status(raw_before, raw_after)
+    lint_ok = bool(lint.get("ok"))
+
+    if raw_integrity == "raw 변경 감지" or not lint_ok:
+        status = "실패"
+    elif fallback_count > 0:
+        status = "fallback 포함 성공"
+    else:
+        status = "성공"
+
+    scanned_count = int(scan.get("scanned_count", 0) or 0)
+    new_count = int(scan.get("new_count", 0) or 0)
+    changed_count = int(scan.get("changed_count", 0) or 0)
+    ignored_count = int(scan.get("ignored_count", 0) or 0)
+    unchanged_count = max(scanned_count - new_count - changed_count, 0)
+    lint_status = "통과" if lint_ok else "실패"
+    fallback_status = "fallback 발생" if fallback_count else "fallback 없음"
+
+    lines = [
+        "Maintenance Run Report",
+        "전체 동기화 완료",
+        f"상태: {status}",
+        f"raw scan: 신규 {new_count}개, 변경 {changed_count}개, 유지 {unchanged_count}개, 제외 {ignored_count}개",
+        (
+            "source summary: "
+            f"provider {summarize.get('provider', 'rule_based')}, "
+            f"요약 {summarize.get('summarized_count', 0)}개, "
+            f"Codex {summarize.get('codex_used_count', 0)}개, "
+            f"fallback {source_fallback}개, "
+            f"검토 필요 {summarize.get('needs_review_count', 0)}개"
+        ),
+        (
+            "concept organize: "
+            f"provider {organize.get('provider', 'rule_based')}, "
+            f"승격 {organize.get('promoted_count', 0)}개, "
+            f"병합 {organize.get('merged_count', 0)}개, "
+            f"건너뜀 {organize.get('skipped_count', 0)}개, "
+            f"Codex {organize.get('codex_used_count', 0)}개, "
+            f"fallback {concept_fallback}개"
+        ),
+        f"lint: {lint_status}, issue {len(lint_issues)}개",
+        f"안전성: {raw_integrity}, lint {lint_status.lower() if lint_ok else '실패'}, {fallback_status}",
+        (
+            "산출물: "
+            f"source {int(summarize.get('summarized_count', 0) or 0) + int(summarize.get('needs_review_count', 0) or 0)}개, "
+            f"concept 변경 {int(organize.get('promoted_count', 0) or 0) + int(organize.get('merged_count', 0) or 0)}개, "
+            f"graph node {len(graph.get('nodes', []) or [])}개, "
+            f"edge {len(graph.get('edges', []) or [])}개"
+        ),
+    ]
+
+    causes = _maintenance_fallback_reasons(source_fallback, concept_fallback)
+    if raw_integrity == "raw 변경 감지":
+        causes.append("raw 파일 해시가 동기화 실행 전후로 달라졌습니다.")
+    if causes:
+        lines.extend(["", "원인:", *(f"- {cause}" for cause in causes)])
+
+    if lint_issues:
+        lines.extend(["", "문제:", *(_format_lint_issue(issue) for issue in lint_issues[:5])])
+
+    return "\n".join(lines)
+
+
+def _maintenance_fallback_reasons(source_fallback: int, concept_fallback: int) -> list[str]:
+    reasons: list[str] = []
+    if source_fallback:
+        reasons.append(f"source summary fallback {source_fallback}개: Codex draft 검증 실패 또는 실행 오류로 rule-based 요약 사용")
+    if concept_fallback:
+        reasons.append(f"concept organize fallback {concept_fallback}개: Codex draft 검증 실패 또는 실행 오류로 rule-based 조직 사용")
+    return reasons
+
+
+def _format_lint_issue(issue: dict[str, Any]) -> str:
+    path = _short_path(str(issue.get("path", "")))
+    message = str(issue.get("message", "")).strip()
+    if path and message:
+        return f"- {path}: {message}"
+    if path:
+        return f"- {path}"
+    return f"- {message or '알 수 없는 lint issue'}"
+
+
+def _short_path(path: str) -> str:
+    normalized = path.replace("\\", "/").rstrip("/")
+    if not normalized:
+        return ""
+    return normalized.rsplit("/", 1)[-1]
+
+
+def _raw_integrity_status(raw_before: dict[str, str] | None, raw_after: dict[str, str] | None) -> str:
+    if raw_before is None or raw_after is None:
+        return "raw 불변성 확인 불가"
+    return "raw 변경 없음" if raw_before == raw_after else "raw 변경 감지"
+
+
+def _raw_snapshot(adapter: Any) -> dict[str, str] | None:
+    raw_dir = getattr(getattr(adapter, "config", None), "raw_dir", None)
+    if not raw_dir:
+        return None
+    root = Path(raw_dir)
+    if not root.exists():
+        return {}
+    snapshot: dict[str, str] = {}
+    for path in sorted(item for item in root.rglob("*") if item.is_file()):
+        relative = path.relative_to(root).as_posix()
+        snapshot[relative] = _sha256(path)
+    return snapshot
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _graph_item_label(item: dict[str, Any]) -> str:
