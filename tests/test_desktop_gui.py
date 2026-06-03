@@ -7,7 +7,9 @@ from wiki_tool.desktop_gui import (
     GUI_PANEL_WEIGHTS,
     GUI_STYLE_COLORS,
     DesktopGuiPresenter,
+    build_local_graph_layout,
     _graph_item_label,
+    _graph_status_text,
 )
 
 
@@ -69,7 +71,36 @@ class FakeAdapter:
         return "# CAPM"
 
     def get_related_pages(self, path, depth=1):
-        return [{"path": "wiki/sources/capm.md", "type": "source", "label": "CAPM Source"}]
+        return [
+            {
+                "path": "wiki/sources/capm.md",
+                "type": "source",
+                "label": "CAPM Source",
+                "tooltip": "CAPM Source",
+                "style": {"color": "#9fbfff", "shape": "square"},
+            }
+        ]
+
+    def get_wiki_graph(self):
+        return {
+            "nodes": [
+                {
+                    "path": "wiki/concepts/capm.md",
+                    "type": "concept",
+                    "label": "CAPM",
+                    "tooltip": "CAPM",
+                    "style": {"color": "#76d6a3", "shape": "circle"},
+                },
+                {
+                    "path": "wiki/sources/capm.md",
+                    "type": "source",
+                    "label": "CAPM Source",
+                    "tooltip": "CAPM Source",
+                    "style": {"color": "#9fbfff", "shape": "square"},
+                },
+            ],
+            "edges": [],
+        }
 
 
 class DesktopGuiTests(unittest.TestCase):
@@ -121,6 +152,46 @@ class DesktopGuiTests(unittest.TestCase):
         )
 
         self.assertEqual(label, "개념 · 듀레이션 - 채권 듀레이션과 금리 위험")
+
+    def test_graph_status_text_uses_full_tooltip_and_path(self):
+        status = _graph_status_text(
+            {
+                "path": "wiki/concepts/duration.md",
+                "type": "concept",
+                "label": "듀레이션",
+                "tooltip": "채권 듀레이션과 금리 위험",
+            }
+        )
+
+        self.assertEqual(status, "개념 · 채권 듀레이션과 금리 위험 · wiki/concepts/duration.md")
+
+    def test_local_graph_layout_places_selected_center_and_related_nodes(self):
+        layout = build_local_graph_layout(
+            {
+                "path": "wiki/concepts/capm.md",
+                "type": "concept",
+                "label": "CAPM",
+                "style": {"color": "#76d6a3", "shape": "circle"},
+            },
+            [
+                {
+                    "path": "wiki/sources/capm.md",
+                    "type": "source",
+                    "label": "CAPM Source",
+                    "style": {"color": "#9fbfff", "shape": "square"},
+                }
+            ],
+            width=600,
+            height=220,
+        )
+
+        self.assertEqual(len(layout["nodes"]), 2)
+        self.assertEqual(len(layout["edges"]), 1)
+        self.assertTrue(layout["nodes"][0]["selected"])
+        self.assertEqual(layout["nodes"][0]["shape"], "circle")
+        self.assertEqual(layout["nodes"][1]["shape"], "square")
+        self.assertEqual(layout["nodes"][0]["x"], 300)
+        self.assertEqual(layout["nodes"][0]["y"], 110)
 
 
 if __name__ == "__main__":

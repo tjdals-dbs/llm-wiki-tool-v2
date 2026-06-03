@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from typing import Any
 
 from .config import DomainConfig
@@ -120,8 +121,10 @@ class DesktopWikiApp:
 
         self.search_var = tk.StringVar()
         self.question_var = tk.StringVar()
+        self.graph_status_var = tk.StringVar(value="graph node에 마우스를 올리면 전체 제목을 볼 수 있습니다.")
         self.page_items: dict[str, str] = {}
         self.related_items: dict[str, str] = {}
+        self.graph_tooltips: dict[str, str] = {}
 
         self._build_layout()
         self.refresh_pages()
@@ -170,18 +173,18 @@ class DesktopWikiApp:
         )
         self.content_text.pack(fill=tk.BOTH, expand=True, pady=(6, 6))
         ttk.Label(center, text="주변 graph", style="SectionTitle.TLabel").pack(anchor=tk.W)
-        self.graph_list = tk.Listbox(
+        self.graph_canvas = tk.Canvas(
             center,
-            height=9,
+            height=220,
             bg="#f0f2f5",
-            fg=GUI_STYLE_COLORS["text"],
-            relief=tk.FLAT,
             highlightthickness=1,
             highlightbackground=GUI_STYLE_COLORS["border"],
-            font=("Segoe UI", 10),
         )
-        self.graph_list.pack(fill=tk.BOTH, expand=False)
-        self.graph_list.bind("<<ListboxSelect>>", self._on_related_selected)
+        self.graph_canvas.pack(fill=tk.BOTH, expand=False)
+        self.graph_canvas.bind("<Motion>", self._on_graph_motion)
+        self.graph_canvas.bind("<Leave>", self._on_graph_leave)
+        self.graph_canvas.bind("<Button-1>", self._on_graph_click)
+        ttk.Label(center, textvariable=self.graph_status_var, style="GraphStatus.TLabel").pack(anchor=tk.W, pady=(4, 0))
 
         ttk.Label(right, text=GUI_PANEL_TITLES[2], style="SectionTitle.TLabel").pack(anchor=tk.W)
         action_group = ttk.LabelFrame(right, text="raw maintenance", padding=8)
@@ -238,6 +241,12 @@ class DesktopWikiApp:
             foreground=GUI_STYLE_COLORS["text"],
             font=("Segoe UI", 12, "bold"),
         )
+        style.configure(
+            "GraphStatus.TLabel",
+            background=GUI_STYLE_COLORS["document_bg"],
+            foreground=GUI_STYLE_COLORS["muted"],
+            font=("Segoe UI", 9),
+        )
         style.configure("TButton", padding=(10, 7), font=("Segoe UI", 10, "bold"))
         style.configure("TEntry", padding=6)
         style.configure("Treeview", rowheight=26, font=("Segoe UI", 10))
@@ -269,23 +278,52 @@ class DesktopWikiApp:
 
     def _show_page(self, path: str) -> None:
         self._set_text(self.content_text, self.adapter.read_wiki_page(path))
+        graph = self.adapter.get_wiki_graph()
+        node_by_path = {node["path"]: node for node in graph.get("nodes", [])}
+        selected = node_by_path.get(path, _fallback_graph_node(path))
         related = self.adapter.get_related_pages(path, depth=1)
-        self.graph_list.delete(0, self.tk.END)
-        self.related_items.clear()
-        if not related:
-            self.graph_list.insert(self.tk.END, "주변 page 없음")
-            return
-        for item in related:
-            label = _graph_item_label(item)
-            self.graph_list.insert(self.tk.END, label)
-            self.related_items[label] = item["path"]
+        self._draw_graph(selected, related)
 
-    def _on_related_selected(self, _event: object) -> None:
-        selected = self.graph_list.curselection()
-        if not selected:
+    def _draw_graph(self, selected: dict[str, Any], related: list[dict[str, Any]]) -> None:
+        width = max(self.graph_canvas.winfo_width(), 520)
+        height = max(self.graph_canvas.winfo_height(), 220)
+        layout = build_local_graph_layout(selected, related, width=width, height=height)
+        self.graph_canvas.delete("all")
+        self.related_items.clear()
+        self.graph_tooltips.clear()
+        for edge in layout["edges"]:
+            self.graph_canvas.create_line(
+                edge["x1"],
+                edge["y1"],
+                edge["x2"],
+                edge["y2"],
+                fill="#c9d0dc",
+                width=2,
+            )
+        for node in layout["nodes"]:
+            tag = f"graph-node-{len(self.related_items)}"
+            self.related_items[tag] = node["path"]
+            self.graph_tooltips[tag] = _graph_status_text(node)
+            _draw_canvas_node(self.graph_canvas, node, tag)
+        self.graph_status_var.set("관련 문서 없음" if not related else "node를 클릭하면 해당 wiki page로 이동합니다.")
+
+    def _on_graph_motion(self, event: Any) -> None:
+        tag = _current_graph_node_tag(self.graph_canvas)
+        if not tag:
+            self.graph_canvas.configure(cursor="")
             return
-        label = self.graph_list.get(selected[0])
-        path = self.related_items.get(label)
+        path = self.related_items.get(tag)
+        if path:
+            self.graph_canvas.configure(cursor="hand2")
+            self.graph_status_var.set(self.graph_tooltips.get(tag, path))
+
+    def _on_graph_leave(self, _event: object) -> None:
+        self.graph_canvas.configure(cursor="")
+        self.graph_status_var.set("graph node에 마우스를 올리면 전체 제목을 볼 수 있습니다.")
+
+    def _on_graph_click(self, _event: object) -> None:
+        tag = _current_graph_node_tag(self.graph_canvas)
+        path = self.related_items.get(tag or "")
         if path:
             self._show_page(path)
 
@@ -338,3 +376,87 @@ def _graph_item_label(item: dict[str, Any]) -> str:
     if tooltip and tooltip != label:
         return f"{type_label} · {label} - {tooltip}"
     return f"{type_label} · {label}"
+
+
+def _graph_status_text(item: dict[str, Any]) -> str:
+    page_type = str(item.get("type", "page"))
+    type_label = GUI_GRAPH_TYPE_LABELS.get(page_type, page_type)
+    title = str(item.get("tooltip") or item.get("title") or item.get("label") or item.get("path") or "Untitled")
+    path = str(item.get("path") or "")
+    if path:
+        return f"{type_label} · {title} · {path}"
+    return f"{type_label} · {title}"
+
+
+def build_local_graph_layout(
+    selected: dict[str, Any],
+    related: list[dict[str, Any]],
+    *,
+    width: int,
+    height: int,
+) -> dict[str, list[dict[str, Any]]]:
+    center_x = width / 2
+    center_y = height / 2
+    radius_x = max(width * 0.34, 130)
+    radius_y = max(height * 0.28, 54)
+    selected_node = _layout_node(selected, center_x, center_y, selected=True)
+    nodes = [selected_node]
+    edges: list[dict[str, Any]] = []
+    count = max(len(related), 1)
+    for index, page in enumerate(related[:10]):
+        angle = (math.pi * 2 * index) / count
+        x = center_x + math.cos(angle) * radius_x
+        y = center_y + math.sin(angle) * radius_y
+        node = _layout_node(page, x, y, selected=False)
+        nodes.append(node)
+        edges.append({"from": selected_node["path"], "to": node["path"], "x1": center_x, "y1": center_y, "x2": x, "y2": y})
+    return {"nodes": nodes, "edges": edges}
+
+
+def _layout_node(page: dict[str, Any], x: float, y: float, *, selected: bool) -> dict[str, Any]:
+    style = page.get("style") or {}
+    return {
+        "path": str(page.get("path", "")),
+        "type": str(page.get("type", "page")),
+        "label": str(page.get("label") or page.get("title") or page.get("path") or "Untitled"),
+        "tooltip": str(page.get("tooltip") or page.get("title") or page.get("path") or ""),
+        "shape": str(style.get("shape", "circle")),
+        "color": str(style.get("color", "#d5dbe6")),
+        "x": x,
+        "y": y,
+        "r": 24 if selected else 16,
+        "selected": selected,
+    }
+
+
+def _draw_canvas_node(canvas: Any, node: dict[str, Any], tag: str) -> None:
+    x = float(node["x"])
+    y = float(node["y"])
+    radius = float(node["r"])
+    fill = str(node["color"])
+    shape = str(node["shape"])
+    tags = (tag, "graph-node")
+    if shape == "square":
+        canvas.create_rectangle(x - radius, y - radius, x + radius, y + radius, fill=fill, outline="#6f7785", width=2, tags=tags)
+    elif shape == "diamond":
+        canvas.create_polygon(x, y - radius, x + radius, y, x, y + radius, x - radius, y, fill=fill, outline="#6f7785", width=2, tags=tags)
+    elif shape == "hexagon":
+        points = []
+        for index in range(6):
+            angle = math.pi / 6 + math.pi * 2 * index / 6
+            points.extend([x + math.cos(angle) * radius, y + math.sin(angle) * radius])
+        canvas.create_polygon(*points, fill=fill, outline="#6f7785", width=2, tags=tags)
+    else:
+        canvas.create_oval(x - radius, y - radius, x + radius, y + radius, fill=fill, outline="#6f7785", width=2, tags=tags)
+    canvas.create_text(x, y + radius + 14, text=str(node["label"]), fill=GUI_STYLE_COLORS["text"], font=("Segoe UI", 9, "bold"), tags=tags)
+
+
+def _current_graph_node_tag(canvas: Any) -> str | None:
+    for tag in canvas.gettags("current"):
+        if tag.startswith("graph-node-"):
+            return tag
+    return None
+
+
+def _fallback_graph_node(path: str) -> dict[str, Any]:
+    return {"path": path, "type": "page", "label": path.rsplit("/", 1)[-1], "tooltip": path, "style": {"color": "#d5dbe6", "shape": "circle"}}
