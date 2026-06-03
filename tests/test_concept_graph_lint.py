@@ -2,7 +2,9 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
+from wiki_tool.agent_hooks import AgentHookResult
 from wiki_tool.config import load_domain_config
 from wiki_tool.graph import build_wiki_graph, get_related_pages
 from wiki_tool.lint import run_wiki_lint
@@ -47,6 +49,9 @@ class ConceptGraphLintTests(unittest.TestCase):
             result = organize_pending_sources(domain)
 
             self.assertEqual(result.promoted_count, 1)
+            self.assertEqual(result.provider, "rule_based")
+            self.assertEqual(result.codex_used_count, 0)
+            self.assertEqual(result.fallback_count, 0)
             concept_page = root / "wiki" / "concepts" / "capm.md"
             content = concept_page.read_text(encoding="utf-8")
             self.assertIn("## Definition", content)
@@ -78,6 +83,144 @@ class ConceptGraphLintTests(unittest.TestCase):
             lint_result = run_wiki_lint(domain)
             self.assertTrue(lint_result.ok)
             self.assertEqual(lint_result.issues, [])
+
+    def test_codex_concept_draft_is_used_when_valid(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            domain = load_domain_config(write_domain(root), root=root)
+            raw_file = root / "raw" / "capm.md"
+            raw_file.parent.mkdir()
+            raw_file.write_text("# CAPM\nCAPM은 기대수익률과 위험을 연결한다.", encoding="utf-8")
+            scan_raw_sources(domain)
+            summarize_new_sources(domain)
+            codex_draft = "\n".join(
+                [
+                    "# CAPM",
+                    "",
+                    "## Definition",
+                    "",
+                    "Codex가 작성한 CAPM 정의입니다.",
+                    "",
+                    "## Explanation",
+                    "",
+                    "Codex concept draft가 반영되었습니다.",
+                    "",
+                    "## Source Evidence",
+                    "",
+                    "- [capm](../sources/capm.md)",
+                    "- CAPM은 기대수익률과 위험을 연결한다.",
+                ]
+            )
+
+            with patch.dict("os.environ", {"LLM_WIKI_AGENT_PROVIDER": "codex"}, clear=True), patch(
+                "wiki_tool.organizer.draft_concept_update_with_agent"
+            ) as hook:
+                hook.return_value = AgentHookResult(
+                    role="concept",
+                    provider="codex",
+                    fallback=False,
+                    status="ok",
+                    draft=codex_draft,
+                )
+                result = organize_pending_sources(domain)
+
+            content = (root / "wiki" / "concepts" / "capm.md").read_text(encoding="utf-8")
+            self.assertEqual(result.provider, "codex")
+            self.assertEqual(result.codex_used_count, 1)
+            self.assertEqual(result.fallback_count, 0)
+            self.assertIn("Codex concept draft가 반영되었습니다.", content)
+            self.assertIn("## Agent Metadata", content)
+            self.assertIn("- provider: codex", content)
+            self.assertIn("- fallback: false", content)
+
+    def test_invalid_codex_concept_draft_falls_back_to_rule_based_page(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            domain = load_domain_config(write_domain(root), root=root)
+            raw_file = root / "raw" / "capm.md"
+            raw_file.parent.mkdir()
+            raw_file.write_text("# CAPM\nCAPM은 기대수익률과 위험을 연결한다.", encoding="utf-8")
+            scan_raw_sources(domain)
+            summarize_new_sources(domain)
+
+            with patch.dict("os.environ", {"LLM_WIKI_AGENT_PROVIDER": "codex"}, clear=True), patch(
+                "wiki_tool.organizer.draft_concept_update_with_agent"
+            ) as hook:
+                hook.return_value = AgentHookResult(
+                    role="concept",
+                    provider="codex",
+                    fallback=False,
+                    status="ok",
+                    draft="# CAPM\n\n## Definition\n\n근거 섹션이 없습니다.",
+                )
+                result = organize_pending_sources(domain)
+
+            content = (root / "wiki" / "concepts" / "capm.md").read_text(encoding="utf-8")
+            self.assertEqual(result.codex_used_count, 0)
+            self.assertEqual(result.fallback_count, 1)
+            self.assertIn("## Source Evidence", content)
+            self.assertIn("missing_source_evidence", content)
+
+    def test_codex_concept_merge_preserves_existing_human_content(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            domain = load_domain_config(write_domain(root), root=root)
+            existing = root / "wiki" / "concepts" / "capm.md"
+            existing.parent.mkdir(parents=True)
+            existing.write_text(
+                "\n".join(
+                    [
+                        "# CAPM",
+                        "",
+                        "## Definition",
+                        "",
+                        "사람이 작성한 기존 설명입니다.",
+                        "",
+                        "## Source Evidence",
+                        "",
+                        "- [old](../sources/old.md)",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            raw_file = root / "raw" / "capm.md"
+            raw_file.parent.mkdir()
+            raw_file.write_text("# CAPM\nCAPM은 기대수익률과 위험을 연결한다.", encoding="utf-8")
+            scan_raw_sources(domain)
+            summarize_new_sources(domain)
+            codex_draft = "\n".join(
+                [
+                    "# CAPM",
+                    "",
+                    "## Definition",
+                    "",
+                    "Codex가 제안한 새 설명입니다.",
+                    "",
+                    "## Source Evidence",
+                    "",
+                    "- [capm](../sources/capm.md)",
+                ]
+            )
+
+            with patch.dict("os.environ", {"LLM_WIKI_AGENT_PROVIDER": "codex"}, clear=True), patch(
+                "wiki_tool.organizer.draft_concept_update_with_agent"
+            ) as hook:
+                hook.return_value = AgentHookResult(
+                    role="concept",
+                    provider="codex",
+                    fallback=False,
+                    status="ok",
+                    draft=codex_draft,
+                )
+                result = organize_pending_sources(domain)
+
+            content = existing.read_text(encoding="utf-8")
+            self.assertEqual(result.merged_count, 1)
+            self.assertEqual(result.codex_used_count, 1)
+            self.assertIn("사람이 작성한 기존 설명입니다.", content)
+            self.assertIn("[capm](../sources/capm.md)", content)
+            self.assertIn("## Agent Draft Notes", content)
+            self.assertIn("Codex가 제안한 새 설명입니다.", content)
 
     def test_graph_uses_short_label_tooltip_and_type_style(self):
         with tempfile.TemporaryDirectory() as tmp:

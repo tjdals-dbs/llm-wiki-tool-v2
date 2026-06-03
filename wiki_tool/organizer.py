@@ -4,6 +4,8 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from .agent_hooks import AgentHookResult, draft_concept_update_with_agent
+from .agent_provider import PROVIDER_CODEX, resolve_agent_provider
 from .config import DomainConfig
 from .manifest import ManifestEntry, read_manifest, write_manifest
 
@@ -14,6 +16,9 @@ class OrganizeResult:
     merged_count: int
     dropped_count: int
     skipped_count: int
+    provider: str = "rule_based"
+    codex_used_count: int = 0
+    fallback_count: int = 0
 
 
 def organize_pending_sources(config: DomainConfig, limit: int | None = None) -> OrganizeResult:
@@ -22,6 +27,9 @@ def organize_pending_sources(config: DomainConfig, limit: int | None = None) -> 
     merged_count = 0
     dropped_count = 0
     skipped_count = 0
+    provider = resolve_agent_provider()
+    codex_used_count = 0
+    fallback_count = 0
     processed = 0
 
     for key, entry in sorted(entries.items()):
@@ -33,6 +41,7 @@ def organize_pending_sources(config: DomainConfig, limit: int | None = None) -> 
             continue
 
         source_page = _safe_wiki_path(config, entry.source_page)
+        source_page_content = source_page.read_text(encoding="utf-8")
         source = _parse_source_summary(source_page)
         candidate_concepts = [concept for concept in source.candidate_concepts if not _is_generic_concept(concept)]
         if source.quality != "usable" or not candidate_concepts:
@@ -49,18 +58,52 @@ def organize_pending_sources(config: DomainConfig, limit: int | None = None) -> 
             evidence = _evidence_for_concept(concept_name, source)
             evidence_signature = _concept_evidence_signature(concept_name, source)
             concept_path = organized_targets_by_evidence.get(evidence_signature) or _concept_page_path(config, concept_name)
+            hook_result: AgentHookResult | None = None
+            validation: dict[str, str | bool] = {"ok": False, "reason": "codex_not_used"}
+            if provider == PROVIDER_CODEX:
+                hook_result = draft_concept_update_with_agent(
+                    _concept_agent_payload(concept_name, source_link, source_page_content)
+                )
+                validation = validate_concept_page_draft(hook_result.draft)
             if concept_path.exists():
                 existing = concept_path.read_text(encoding="utf-8")
-                merged = _merge_concept_page(existing, source_link, evidence)
+                if _can_use_codex_draft(hook_result, validation):
+                    merged = _merge_codex_concept_page(existing, hook_result.draft, source_link, evidence)
+                    codex_used_count += 1
+                else:
+                    if provider == PROVIDER_CODEX:
+                        fallback_count += 1
+                    merged = _merge_concept_page(existing, source_link, evidence)
                 if merged != existing:
                     concept_path.write_text(merged, encoding="utf-8")
                     merged_count += 1
             else:
                 concept_path.parent.mkdir(parents=True, exist_ok=True)
-                concept_path.write_text(
-                    _render_concept_page(concept_name, source, source_link),
-                    encoding="utf-8",
-                )
+                if _can_use_codex_draft(hook_result, validation):
+                    concept_page = _with_concept_pipeline_metadata(
+                        hook_result.draft,
+                        provider="codex",
+                        codex_status=hook_result.status,
+                        fallback=False,
+                        fallback_reason="",
+                    )
+                    codex_used_count += 1
+                else:
+                    if provider == PROVIDER_CODEX:
+                        fallback_count += 1
+                    reason = ""
+                    status = ""
+                    if hook_result is not None:
+                        reason = hook_result.error or str(validation["reason"])
+                        status = hook_result.status
+                    concept_page = _with_concept_pipeline_metadata(
+                        _render_concept_page(concept_name, source, source_link),
+                        provider=provider,
+                        codex_status=status,
+                        fallback=provider == PROVIDER_CODEX,
+                        fallback_reason=reason,
+                    )
+                concept_path.write_text(concept_page, encoding="utf-8")
                 promoted_count += 1
             organized_targets_by_evidence.setdefault(evidence_signature, concept_path)
             organized_any = True
@@ -86,6 +129,9 @@ def organize_pending_sources(config: DomainConfig, limit: int | None = None) -> 
         merged_count=merged_count,
         dropped_count=dropped_count,
         skipped_count=skipped_count,
+        provider=provider,
+        codex_used_count=codex_used_count,
+        fallback_count=fallback_count,
     )
 
 
@@ -150,6 +196,61 @@ def _render_concept_page(name: str, source: ParsedSourceSummary, source_link: st
             "",
         ]
     )
+
+
+def validate_concept_page_draft(draft: str) -> dict[str, str | bool]:
+    if not draft.strip():
+        return {"ok": False, "reason": "empty_draft"}
+    if not _title(draft):
+        return {"ok": False, "reason": "missing_title"}
+    has_explanation = bool(_section_text(draft, "Definition") or _section_text(draft, "Explanation"))
+    if not has_explanation:
+        return {"ok": False, "reason": "missing_reader_facing_explanation"}
+    source_evidence = _section_lines(draft, "Source Evidence")
+    if not source_evidence or not any("[" in line or "source" in line.casefold() or "근거" in line for line in source_evidence):
+        return {"ok": False, "reason": "missing_source_evidence"}
+    return {"ok": True, "reason": ""}
+
+
+def _can_use_codex_draft(
+    hook_result: AgentHookResult | None,
+    validation: dict[str, str | bool],
+) -> bool:
+    return bool(hook_result and hook_result.provider == "codex" and not hook_result.fallback and validation["ok"])
+
+
+def _concept_agent_payload(concept_name: str, source_link: str, source_page_content: str) -> str:
+    return "\n".join(
+        [
+            f"target concept: {concept_name}",
+            f"source link: {source_link}",
+            "",
+            source_page_content,
+        ]
+    )
+
+
+def _with_concept_pipeline_metadata(
+    content: str,
+    *,
+    provider: str,
+    codex_status: str,
+    fallback: bool,
+    fallback_reason: str,
+) -> str:
+    lines = [
+        content.rstrip(),
+        "",
+        "## Agent Metadata",
+        "",
+        f"- provider: {provider}",
+        f"- codex_status: {codex_status}",
+        f"- fallback: {str(fallback).lower()}",
+    ]
+    if fallback_reason:
+        lines.append(f"- fallback_reason: {_truncate(fallback_reason, 180)}")
+    lines.append("")
+    return "\n".join(lines)
 
 
 def _safe_wiki_path(config: DomainConfig, relative_path: str) -> Path:
@@ -348,6 +449,43 @@ def _merge_concept_page(existing: str, source_link: str, evidence: list[str]) ->
     if next_heading < 0:
         return existing.rstrip() + "\n" + insertion
     return existing[:next_heading].rstrip() + "\n" + insertion + existing[next_heading:]
+
+
+def _merge_codex_concept_page(existing: str, draft: str, source_link: str, evidence: list[str]) -> str:
+    merged = _merge_concept_page(existing, source_link, evidence)
+    draft_note = _draft_note_from_concept_page(draft)
+    if not draft_note or draft_note in merged:
+        return merged
+    note_block = "\n".join(
+        [
+            "",
+            "## Agent Draft Notes",
+            "",
+            f"- {draft_note}",
+            "",
+            "## Agent Metadata",
+            "",
+            "- provider: codex",
+            "- fallback: false",
+            "",
+        ]
+    )
+    return merged.rstrip() + "\n" + note_block
+
+
+def _draft_note_from_concept_page(draft: str) -> str:
+    for heading in ["Definition", "Explanation"]:
+        text = _section_text(draft, heading)
+        if text:
+            return _truncate(re.sub(r"\s+", " ", text), 220)
+    return ""
+
+
+def _truncate(value: str, limit: int) -> str:
+    cleaned = value.strip()
+    if len(cleaned) <= limit:
+        return cleaned
+    return cleaned[: limit - 1].rstrip() + "…"
 
 
 def _normalize_concept_name(value: str) -> str:
