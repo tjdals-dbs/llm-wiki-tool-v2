@@ -153,13 +153,15 @@ def parse_codex_output(stdout: str) -> CodexAgentResult:
             evidence=[],
             raw_text=raw,
         )
+    evidence = _list_of_dicts(parsed.get("evidence"))
+    used_pages = _list_of_dicts(parsed.get("used_pages")) or _used_pages_from_evidence(evidence)
     return CodexAgentResult(
         ok=True,
         status=str(parsed.get("status") or "ok"),
         answer=str(parsed.get("answer") or ""),
-        used_pages=_list_of_dicts(parsed.get("used_pages")),
+        used_pages=used_pages,
         related_pages=_list_of_dicts(parsed.get("related_pages")),
-        evidence=_list_of_dicts(parsed.get("evidence")),
+        evidence=evidence,
         raw_text=raw,
     )
 
@@ -189,6 +191,21 @@ def _list_of_dicts(value: Any) -> list[dict[str, Any]]:
     if not isinstance(value, list):
         return []
     return [item for item in value if isinstance(item, dict)]
+
+
+def _used_pages_from_evidence(evidence: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    used_pages: list[dict[str, Any]] = []
+    seen_paths: set[str] = set()
+    for item in evidence:
+        path = str(item.get("path") or "").strip()
+        if not path or path in seen_paths:
+            continue
+        seen_paths.add(path)
+        page = {"path": path, "title": str(item.get("title") or path)}
+        if item.get("type"):
+            page["type"] = item["type"]
+        used_pages.append(page)
+    return used_pages
 
 
 def _temporary_output_path() -> Path:

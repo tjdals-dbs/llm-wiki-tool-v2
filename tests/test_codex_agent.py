@@ -51,6 +51,42 @@ class CodexAgentBridgeTests(unittest.TestCase):
         self.assertEqual(result.answer, "근거 기반 답변입니다.")
         self.assertEqual(result.used_pages[0]["path"], "wiki/concepts/capm.md")
 
+    def test_bridge_restores_used_pages_from_evidence_paths(self):
+        payload = {
+            "status": "ok",
+            "answer": "근거 기반 답변입니다.",
+            "used_pages": [],
+            "related_pages": [],
+            "evidence": [
+                {"path": "wiki/concepts/capm.md", "title": "CAPM", "text": "근거 1"},
+                {"path": "wiki/concepts/capm.md", "title": "CAPM duplicate", "text": "근거 2"},
+                {"path": "wiki/sources/capm.md", "text": "근거 3"},
+            ],
+        }
+
+        result = parse_codex_output(json.dumps(payload, ensure_ascii=False))
+
+        self.assertEqual(
+            result.used_pages,
+            [
+                {"path": "wiki/concepts/capm.md", "title": "CAPM"},
+                {"path": "wiki/sources/capm.md", "title": "wiki/sources/capm.md"},
+            ],
+        )
+
+    def test_bridge_preserves_explicit_used_pages_when_present(self):
+        payload = {
+            "status": "ok",
+            "answer": "근거 기반 답변입니다.",
+            "used_pages": [{"path": "wiki/manual.md", "title": "Manual"}],
+            "related_pages": [],
+            "evidence": [{"path": "wiki/concepts/capm.md", "title": "CAPM", "text": "근거"}],
+        }
+
+        result = parse_codex_output(json.dumps(payload, ensure_ascii=False))
+
+        self.assertEqual(result.used_pages, [{"path": "wiki/manual.md", "title": "Manual"}])
+
     def test_bridge_extracts_json_when_cli_logs_are_mixed_in_stdout(self):
         stdout = "\n".join(
             [
