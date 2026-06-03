@@ -23,7 +23,7 @@ class FakeAdapter:
 
     def summarize_new_sources(self):
         self.calls.append("summarize")
-        return {"summarized_count": 1, "needs_review_count": 0}
+        return {"summarized_count": 1, "needs_review_count": 0, "skipped_count": 2}
 
     def organize_pending_sources(self):
         self.calls.append("organize")
@@ -82,6 +82,7 @@ class FakeAdapter:
         ]
 
     def get_wiki_graph(self):
+        self.calls.append("graph")
         return {
             "nodes": [
                 {
@@ -140,6 +141,22 @@ class DesktopGuiTests(unittest.TestCase):
         self.assertIn("pending source", status)
         self.assertIn("source quality", status)
         self.assertIn("usable", status)
+
+    def test_presenter_summarizes_maintenance_workflow_counts(self):
+        adapter = FakeAdapter()
+        presenter = DesktopGuiPresenter(adapter)
+
+        status = presenter.run_maintenance_workflow()
+
+        self.assertIn("maintenance 완료", status)
+        self.assertIn("새 raw source: 1", status)
+        self.assertIn("갱신된 source: 1", status)
+        self.assertIn("needs_review source: 0", status)
+        self.assertIn("promoted concept: 1", status)
+        self.assertIn("merged concept: 0", status)
+        self.assertIn("lint: 통과", status)
+        self.assertIn("graph 갱신: node 2개, edge 0개", status)
+        self.assertEqual(adapter.calls, ["scan", "summarize", "organize", "graph", "lint"])
 
     def test_graph_item_label_uses_short_label_and_tooltip(self):
         label = _graph_item_label(

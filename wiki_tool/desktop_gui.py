@@ -8,7 +8,7 @@ from .mcp_tools import WikiToolAdapter
 
 
 GUI_PANEL_TITLES = ["위키 페이지", "선택한 페이지", "에이전트 제어"]
-GUI_ACTION_LABELS = ["raw 스캔", "새 source 요약", "pending concept 조직", "wiki lint", "에이전트에게 질문"]
+GUI_ACTION_LABELS = ["raw 스캔", "새 source 요약", "pending concept 조직", "wiki lint", "maintenance 실행", "에이전트에게 질문"]
 GUI_GRAPH_TYPE_LABELS = {
     "concept": "개념",
     "source": "원문",
@@ -67,6 +67,33 @@ class DesktopGuiPresenter:
             return "wiki lint 통과"
         issues = result.get("issues", [])
         return "wiki lint 경고:\n" + "\n".join(f"- {item['path']}: {item['message']}" for item in issues)
+
+    def run_maintenance_workflow(self) -> str:
+        scan = self.adapter.scan_raw_sources()
+        summarize = self.adapter.summarize_new_sources()
+        organize = self.adapter.organize_pending_sources()
+        graph = self.adapter.get_wiki_graph()
+        lint = self.adapter.run_wiki_lint()
+        lint_status = "통과" if lint.get("ok") else f"경고 {len(lint.get('issues', []))}개"
+        summary_lines = [
+            "maintenance 완료",
+            f"- 새 raw source: {scan.get('new_count', 0)}",
+            f"- 갱신된 source: {summarize.get('summarized_count', 0)}",
+            f"- needs_review source: {summarize.get('needs_review_count', 0)}",
+            f"- promoted concept: {organize.get('promoted_count', 0)}",
+            f"- merged concept: {organize.get('merged_count', 0)}",
+            f"- lint: {lint_status}",
+        ]
+        detail_lines = [
+            "",
+            "세부 로그",
+            f"- raw 변경 감지: 새 {scan.get('new_count', 0)}개, 변경 {scan.get('changed_count', 0)}개, 무시 {scan.get('ignored_count', 0)}개",
+            f"- source 생성: 요약 {summarize.get('summarized_count', 0)}개, 검토 필요 {summarize.get('needs_review_count', 0)}개, 건너뜀 {summarize.get('skipped_count', 0)}개",
+            f"- concept 승격/병합: 승격 {organize.get('promoted_count', 0)}개, 병합 {organize.get('merged_count', 0)}개, 보류 {organize.get('dropped_count', 0)}개",
+            f"- graph 갱신: node {len(graph.get('nodes', []))}개, edge {len(graph.get('edges', []))}개",
+            f"- lint 상태: {lint_status}",
+        ]
+        return "\n".join(summary_lines + detail_lines)
 
     def wiki_status(self) -> str:
         sources = self.adapter.list_wiki_pages(page_type="source")
@@ -194,6 +221,7 @@ class DesktopWikiApp:
             ("새 source 요약", self._summarize),
             ("pending concept 조직", self._organize),
             ("wiki lint", self._lint),
+            ("maintenance 실행", self._maintenance),
             ("상태 새로고침", self._status),
         ]:
             ttk.Button(action_group, text=label, command=command).pack(fill=tk.X, pady=(5, 0))
@@ -341,6 +369,10 @@ class DesktopWikiApp:
 
     def _lint(self) -> None:
         self._set_agent_status(self.presenter.run_wiki_lint())
+
+    def _maintenance(self) -> None:
+        self._set_agent_status(self.presenter.run_maintenance_workflow())
+        self.refresh_pages()
 
     def _status(self) -> None:
         self._set_agent_status(self.presenter.wiki_status())
