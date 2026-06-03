@@ -57,6 +57,10 @@ class ConceptGraphLintTests(unittest.TestCase):
             graph = build_wiki_graph(domain)
             edge_types = {(edge["from"], edge["to"], edge["type"]) for edge in graph["edges"]}
             self.assertIn(("wiki/concepts/capm.md", "wiki/sources/capm.md", "derived_from"), edge_types)
+            concept_node = next(node for node in graph["nodes"] if node["path"] == "wiki/concepts/capm.md")
+            self.assertEqual(concept_node["label"], "CAPM")
+            self.assertEqual(concept_node["tooltip"], "CAPM")
+            self.assertEqual(concept_node["style"]["shape"], "circle")
 
             graph_file = root / "wiki" / "graph" / "graph.json"
             self.assertEqual(json.loads(graph_file.read_text(encoding="utf-8"))["nodes"][0]["type"], "concept")
@@ -67,6 +71,39 @@ class ConceptGraphLintTests(unittest.TestCase):
             lint_result = run_wiki_lint(domain)
             self.assertTrue(lint_result.ok)
             self.assertEqual(lint_result.issues, [])
+
+    def test_graph_uses_short_label_tooltip_and_type_style(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            domain = load_domain_config(write_domain(root), root=root)
+            concept = root / "wiki" / "concepts" / "long.md"
+            concept.parent.mkdir(parents=True)
+            concept.write_text(
+                "\n".join(
+                    [
+                        "# 매우 긴 채권 듀레이션과 금리 위험 설명 문서",
+                        "",
+                        "## Definition",
+                        "",
+                        "듀레이션은 금리 변화에 대한 채권 가격의 민감도다.",
+                        "",
+                        "## Source Evidence",
+                        "",
+                        "- [duration](../sources/duration.md)",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            source = root / "wiki" / "sources" / "duration.md"
+            source.parent.mkdir(parents=True)
+            source.write_text("# Duration Source\n\n## Evidence\n\n- 듀레이션은 금리 변화와 관련된다.", encoding="utf-8")
+
+            graph = build_wiki_graph(domain)
+
+            node = next(item for item in graph["nodes"] if item["path"] == "wiki/concepts/long.md")
+            self.assertLessEqual(len(node["label"]), 18)
+            self.assertEqual(node["tooltip"], "매우 긴 채권 듀레이션과 금리 위험 설명 문서")
+            self.assertEqual(node["style"]["color"], "#76d6a3")
 
     def test_weak_source_is_not_promoted_to_concept(self):
         with tempfile.TemporaryDirectory() as tmp:

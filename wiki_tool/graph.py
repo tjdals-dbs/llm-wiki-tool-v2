@@ -11,10 +11,7 @@ from .config import DomainConfig
 
 def build_wiki_graph(config: DomainConfig) -> dict[str, list[dict[str, Any]]]:
     pages = _wiki_pages(config)
-    nodes = [
-        {"id": page, "path": page, "label": _page_title(config.root / page), "type": _page_type(page)}
-        for page in pages
-    ]
+    nodes = [_graph_node(config.root / page, page) for page in pages]
     edges: list[dict[str, Any]] = []
     for page in pages:
         source = config.root / page
@@ -83,6 +80,37 @@ def _page_title(path: Path) -> str:
         if line.startswith("# "):
             return line[2:].strip()
     return path.stem
+
+
+def _graph_node(path: Path, relative_path: str) -> dict[str, Any]:
+    page_type = _page_type(relative_path)
+    title = _page_title(path)
+    return {
+        "id": relative_path,
+        "path": relative_path,
+        "label": _short_label(title, relative_path),
+        "tooltip": title,
+        "type": page_type,
+        "style": _node_style(page_type),
+    }
+
+
+def _short_label(title: str, path: str, limit: int = 18) -> str:
+    source = title.strip() or Path(path).stem
+    if len(source) <= limit:
+        return source
+    return source[: limit - 1].rstrip() + "…"
+
+
+def _node_style(page_type: str) -> dict[str, str]:
+    styles = {
+        "concept": {"color": "#76d6a3", "shape": "circle"},
+        "source": {"color": "#9fbfff", "shape": "square"},
+        "answer": {"color": "#c7a7ff", "shape": "diamond"},
+        "index": {"color": "#c7ceda", "shape": "hexagon"},
+        "overview": {"color": "#d7dce5", "shape": "hexagon"},
+    }
+    return styles.get(page_type, {"color": "#d5dbe6", "shape": "circle"})
 
 
 def _markdown_links(source: Path, root: Path) -> list[str]:

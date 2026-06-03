@@ -8,6 +8,15 @@ from .mcp_tools import WikiToolAdapter
 
 GUI_PANEL_TITLES = ["위키 페이지", "선택한 페이지", "에이전트 제어"]
 GUI_ACTION_LABELS = ["raw 스캔", "새 source 요약", "pending concept 조직", "wiki lint", "에이전트에게 질문"]
+GUI_GRAPH_TYPE_LABELS = {
+    "concept": "개념",
+    "source": "원문",
+    "answer": "답변",
+    "journal": "답변",
+    "index": "색인",
+    "overview": "개요",
+    "page": "문서",
+}
 GUI_PANEL_WEIGHTS = (280, 796, 364)
 GUI_STYLE_COLORS = {
     "app_bg": "#e9ebef",
@@ -267,7 +276,7 @@ class DesktopWikiApp:
             self.graph_list.insert(self.tk.END, "주변 page 없음")
             return
         for item in related:
-            label = f"{item['path']} ({item['type']})"
+            label = _graph_item_label(item)
             self.graph_list.insert(self.tk.END, label)
             self.related_items[label] = item["path"]
 
@@ -319,3 +328,13 @@ def _quality_value(content: str) -> str:
         if line.startswith("- quality:"):
             return line.split(":", 1)[1].strip()
     return "unknown"
+
+
+def _graph_item_label(item: dict[str, Any]) -> str:
+    page_type = str(item.get("type", "page"))
+    type_label = GUI_GRAPH_TYPE_LABELS.get(page_type, page_type)
+    label = str(item.get("label") or item.get("title") or item.get("path") or "Untitled")
+    tooltip = str(item.get("tooltip") or item.get("title") or "")
+    if tooltip and tooltip != label:
+        return f"{type_label} · {label} - {tooltip}"
+    return f"{type_label} · {label}"

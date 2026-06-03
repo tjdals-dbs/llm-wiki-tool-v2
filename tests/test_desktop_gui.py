@@ -2,10 +2,12 @@ import unittest
 
 from wiki_tool.desktop_gui import (
     GUI_ACTION_LABELS,
+    GUI_GRAPH_TYPE_LABELS,
     GUI_PANEL_TITLES,
     GUI_PANEL_WEIGHTS,
     GUI_STYLE_COLORS,
     DesktopGuiPresenter,
+    _graph_item_label,
 )
 
 
@@ -85,6 +87,7 @@ class DesktopGuiTests(unittest.TestCase):
         self.assertNotIn("파일 업로드", labels)
         self.assertEqual(GUI_PANEL_WEIGHTS, (280, 796, 364))
         self.assertEqual(GUI_STYLE_COLORS["document_bg"], "#f7f7f5")
+        self.assertEqual(GUI_GRAPH_TYPE_LABELS["concept"], "개념")
 
     def test_presenter_returns_korean_status_messages_for_agent_actions(self):
         adapter = FakeAdapter()
@@ -106,6 +109,18 @@ class DesktopGuiTests(unittest.TestCase):
         self.assertIn("pending source", status)
         self.assertIn("source quality", status)
         self.assertIn("usable", status)
+
+    def test_graph_item_label_uses_short_label_and_tooltip(self):
+        label = _graph_item_label(
+            {
+                "path": "wiki/concepts/duration.md",
+                "type": "concept",
+                "label": "듀레이션",
+                "tooltip": "채권 듀레이션과 금리 위험",
+            }
+        )
+
+        self.assertEqual(label, "개념 · 듀레이션 - 채권 듀레이션과 금리 위험")
 
 
 if __name__ == "__main__":
