@@ -114,6 +114,22 @@ class McpToolAdapterTests(unittest.TestCase):
             self.assertEqual(organized["promoted_count"], 1)
             self.assertTrue(lint["ok"])
 
+    def test_agent_hook_methods_default_to_rule_based_fallback(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            domain = load_domain_config(write_domain(root), root=root)
+            adapter = WikiToolAdapter(domain)
+
+            ingest = adapter.draft_source_summary_with_agent("raw text")
+            concept = adapter.draft_concept_update_with_agent("# Source")
+            review = adapter.review_wiki_changes_with_agent("changes")
+
+            self.assertEqual(ingest["role"], "ingest")
+            self.assertEqual(concept["role"], "concept")
+            self.assertEqual(review["role"], "review")
+            self.assertTrue(ingest["fallback"])
+            self.assertEqual(ingest["provider"], "rule_based")
+
 
 if __name__ == "__main__":
     unittest.main()

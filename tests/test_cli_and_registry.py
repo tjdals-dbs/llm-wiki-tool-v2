@@ -38,6 +38,9 @@ class CliAndRegistryTests(unittest.TestCase):
             self.assertIn("scan_raw_sources", registry)
             self.assertIn("summarize_new_sources", registry)
             self.assertIn("organize_pending_sources", registry)
+            self.assertIn("draft_source_summary_with_agent", registry)
+            self.assertIn("draft_concept_update_with_agent", registry)
+            self.assertIn("review_wiki_changes_with_agent", registry)
             self.assertIn("run_wiki_lint", registry)
 
     def test_cli_runs_raw_to_concept_pipeline_from_domain_file(self):

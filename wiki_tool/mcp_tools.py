@@ -5,6 +5,11 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
+from .agent_hooks import (
+    draft_concept_update_with_agent as hook_draft_concept_update_with_agent,
+    draft_source_summary_with_agent as hook_draft_source_summary_with_agent,
+    review_wiki_changes_with_agent as hook_review_wiki_changes_with_agent,
+)
 from .agent_provider import PROVIDER_CODEX, load_agent_provider_config
 from .codex_agent import CodexAgentBridge
 from .config import DomainConfig
@@ -156,6 +161,15 @@ class WikiToolAdapter:
         result = core_organize_pending_sources(self.config, limit=limit)
         build_wiki_graph(self.config)
         return {"message": "concept organization 완료", **asdict(result)}
+
+    def draft_source_summary_with_agent(self, source_text: str) -> dict[str, Any]:
+        return hook_draft_source_summary_with_agent(source_text).as_dict()
+
+    def draft_concept_update_with_agent(self, source_page: str) -> dict[str, Any]:
+        return hook_draft_concept_update_with_agent(source_page).as_dict()
+
+    def review_wiki_changes_with_agent(self, changes_summary: str) -> dict[str, Any]:
+        return hook_review_wiki_changes_with_agent(changes_summary).as_dict()
 
     def apply_wiki_update(
         self,
