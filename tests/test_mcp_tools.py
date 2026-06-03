@@ -111,7 +111,13 @@ class McpToolAdapterTests(unittest.TestCase):
 
             self.assertEqual(scan["message"], "raw source scan 완료")
             self.assertEqual(summary["summarized_count"], 1)
+            self.assertEqual(summary["provider"], "rule_based")
+            self.assertEqual(summary["codex_used_count"], 0)
+            self.assertEqual(summary["fallback_count"], 0)
             self.assertEqual(organized["promoted_count"], 1)
+            self.assertEqual(organized["provider"], "rule_based")
+            self.assertEqual(organized["codex_used_count"], 0)
+            self.assertEqual(organized["fallback_count"], 0)
             self.assertTrue(lint["ok"])
 
     def test_agent_hook_methods_default_to_rule_based_fallback(self):

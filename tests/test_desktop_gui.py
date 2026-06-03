@@ -23,11 +23,25 @@ class FakeAdapter:
 
     def summarize_new_sources(self):
         self.calls.append("summarize")
-        return {"summarized_count": 1, "needs_review_count": 0, "skipped_count": 2}
+        return {
+            "provider": "codex",
+            "summarized_count": 1,
+            "needs_review_count": 0,
+            "skipped_count": 2,
+            "codex_used_count": 1,
+            "fallback_count": 0,
+        }
 
     def organize_pending_sources(self):
         self.calls.append("organize")
-        return {"promoted_count": 1, "merged_count": 0, "dropped_count": 0}
+        return {
+            "provider": "codex",
+            "promoted_count": 1,
+            "merged_count": 0,
+            "dropped_count": 0,
+            "codex_used_count": 1,
+            "fallback_count": 1,
+        }
 
     def run_wiki_lint(self):
         self.calls.append("lint")
@@ -175,7 +189,11 @@ class DesktopGuiTests(unittest.TestCase):
         self.assertIn("needs_review source: 0", status)
         self.assertIn("promoted concept: 1", status)
         self.assertIn("merged concept: 0", status)
+        self.assertIn("agent provider: source=codex, concept=codex", status)
+        self.assertIn("Codex 사용: source 1개, concept 1개", status)
+        self.assertIn("fallback: source 0개, concept 1개", status)
         self.assertIn("lint: 통과", status)
+        self.assertIn("agent 사용: source Codex 1개/fallback 0개, concept Codex 1개/fallback 1개", status)
         self.assertIn("graph 갱신: node 2개, edge 0개", status)
         self.assertEqual(adapter.calls, ["scan", "summarize", "organize", "graph", "lint"])
 

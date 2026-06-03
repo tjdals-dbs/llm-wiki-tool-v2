@@ -77,11 +77,14 @@ class DesktopGuiPresenter:
         lint_status = "통과" if lint.get("ok") else f"경고 {len(lint.get('issues', []))}개"
         summary_lines = [
             "maintenance 완료",
+            f"- agent provider: source={summarize.get('provider', 'rule_based')}, concept={organize.get('provider', 'rule_based')}",
             f"- 새 raw source: {scan.get('new_count', 0)}",
             f"- 갱신된 source: {summarize.get('summarized_count', 0)}",
             f"- needs_review source: {summarize.get('needs_review_count', 0)}",
             f"- promoted concept: {organize.get('promoted_count', 0)}",
             f"- merged concept: {organize.get('merged_count', 0)}",
+            f"- Codex 사용: source {summarize.get('codex_used_count', 0)}개, concept {organize.get('codex_used_count', 0)}개",
+            f"- fallback: source {summarize.get('fallback_count', 0)}개, concept {organize.get('fallback_count', 0)}개",
             f"- lint: {lint_status}",
         ]
         detail_lines = [
@@ -90,6 +93,7 @@ class DesktopGuiPresenter:
             f"- raw 변경 감지: 새 {scan.get('new_count', 0)}개, 변경 {scan.get('changed_count', 0)}개, 무시 {scan.get('ignored_count', 0)}개",
             f"- source 생성: 요약 {summarize.get('summarized_count', 0)}개, 검토 필요 {summarize.get('needs_review_count', 0)}개, 건너뜀 {summarize.get('skipped_count', 0)}개",
             f"- concept 승격/병합: 승격 {organize.get('promoted_count', 0)}개, 병합 {organize.get('merged_count', 0)}개, 보류 {organize.get('dropped_count', 0)}개",
+            f"- agent 사용: source Codex {summarize.get('codex_used_count', 0)}개/fallback {summarize.get('fallback_count', 0)}개, concept Codex {organize.get('codex_used_count', 0)}개/fallback {organize.get('fallback_count', 0)}개",
             f"- graph 갱신: node {len(graph.get('nodes', []))}개, edge {len(graph.get('edges', []))}개",
             f"- lint 상태: {lint_status}",
         ]
