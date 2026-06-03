@@ -5,6 +5,8 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
+from .agent_provider import PROVIDER_CODEX, load_agent_provider_config
+from .codex_agent import CodexAgentBridge
 from .config import DomainConfig
 from .graph import build_wiki_graph, get_related_pages as graph_related_pages
 from .lint import run_wiki_lint as core_run_wiki_lint
@@ -84,6 +86,25 @@ class WikiToolAdapter:
         return context[:limit]
 
     def answer_question(self, query: str) -> dict[str, Any]:
+        provider_config = load_agent_provider_config("answer")
+        if provider_config.provider == PROVIDER_CODEX:
+            codex_result = CodexAgentBridge(provider_config).run_answer(query)
+            if codex_result.ok:
+                payload = codex_result.to_answer_payload()
+                payload["fallback"] = False
+                return payload
+            fallback = self._answer_question_rule_based(query)
+            fallback["provider"] = "rule_based"
+            fallback["fallback"] = True
+            fallback["fallback_reason"] = codex_result.error
+            fallback["codex_status"] = codex_result.status
+            return fallback
+        answer = self._answer_question_rule_based(query)
+        answer["provider"] = "rule_based"
+        answer["fallback"] = False
+        return answer
+
+    def _answer_question_rule_based(self, query: str) -> dict[str, Any]:
         context = self.ask_wiki_context(query, limit=5)
         evidence = self._collect_answer_evidence(query, context)
         if not evidence:

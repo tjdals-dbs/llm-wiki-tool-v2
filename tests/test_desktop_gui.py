@@ -44,6 +44,8 @@ class FakeAdapter:
             "answer": "wiki 근거를 기준으로 답합니다.",
             "used_pages": [{"path": "wiki/concepts/capm.md", "title": "CAPM"}],
             "related_pages": [],
+            "provider": "rule_based",
+            "fallback": False,
         }
 
     def list_wiki_pages(self, page_type=None):
@@ -131,6 +133,25 @@ class DesktopGuiTests(unittest.TestCase):
         self.assertIn("lint 통과", presenter.run_wiki_lint())
         self.assertIn("wiki/concepts/capm.md", presenter.ask_agent("CAPM"))
         self.assertEqual(adapter.calls[:4], ["scan", "summarize", "organize", "lint"])
+
+    def test_presenter_marks_codex_fallback_answer(self):
+        adapter = FakeAdapter()
+        adapter.answer_question = lambda query: {
+            "status": "ok",
+            "answer": "rule-based fallback 답변입니다.",
+            "used_pages": [],
+            "related_pages": [],
+            "provider": "rule_based",
+            "fallback": True,
+            "codex_status": "codex_timeout",
+            "fallback_reason": "Codex CLI 실행 시간이 초과되었습니다.",
+        }
+        presenter = DesktopGuiPresenter(adapter)
+
+        message = presenter.ask_agent("CAPM")
+
+        self.assertIn("provider: rule_based fallback (codex_timeout)", message)
+        self.assertIn("fallback reason: Codex CLI 실행 시간이 초과되었습니다.", message)
 
     def test_presenter_reports_pending_sources_and_source_quality(self):
         adapter = FakeAdapter()

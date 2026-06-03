@@ -119,7 +119,15 @@ class DesktopGuiPresenter:
         if not query.strip():
             return "질문을 입력하세요."
         answer = self.adapter.answer_question(query)
-        lines = [answer["answer"], "", "used pages:"]
+        provider = answer.get("provider", "rule_based")
+        fallback = bool(answer.get("fallback"))
+        provider_line = f"provider: {provider}"
+        if fallback:
+            provider_line += f" fallback ({answer.get('codex_status', 'codex_error')})"
+        lines = [answer["answer"], "", provider_line]
+        if fallback and answer.get("fallback_reason"):
+            lines.append(f"fallback reason: {answer['fallback_reason']}")
+        lines.extend(["", "used pages:"])
         for item in answer.get("used_pages", []):
             lines.append(f"- {item['path']}: {item.get('title', '')}")
         lines.append("")

@@ -2,8 +2,10 @@ import tempfile
 import unittest
 import asyncio
 from pathlib import Path
+from unittest.mock import patch
 
 from wiki_tool.config import load_domain_config
+from wiki_tool.codex_agent import CodexAgentResult
 from wiki_tool.mcp_server import create_fastmcp_server, register_mcp_tools
 from wiki_tool.mcp_tools import WikiToolAdapter
 from wiki_tool.scanner import scan_raw_sources
@@ -61,6 +63,8 @@ class AnswerAndMcpServerTests(unittest.TestCase):
             answer = adapter.answer_question("CAPM은 무엇인가?")
 
             self.assertEqual(answer["status"], "ok")
+            self.assertEqual(answer["provider"], "rule_based")
+            self.assertFalse(answer["fallback"])
             self.assertIn("wiki 근거", answer["answer"])
             self.assertTrue(answer["used_pages"])
             self.assertTrue(answer["related_pages"])
@@ -80,6 +84,56 @@ class AnswerAndMcpServerTests(unittest.TestCase):
             self.assertIn("근거가 부족합니다", answer["answer"])
             self.assertEqual(answer["used_pages"], [])
             self.assertEqual(answer["evidence"], [])
+
+    def test_answer_question_uses_codex_provider_when_enabled(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            adapter = build_adapter(Path(tmp))
+            codex_result = CodexAgentResult(
+                ok=True,
+                status="ok",
+                answer="Codex가 MCP wiki tools 근거로 답했습니다.",
+                used_pages=[{"path": "wiki/concepts/capm.md"}],
+                related_pages=[],
+                evidence=[],
+            )
+
+            with patch.dict(
+                "os.environ",
+                {"LLM_WIKI_AGENT_PROVIDER": "codex", "LLM_WIKI_ANSWER_MODEL": "answer-model"},
+                clear=True,
+            ), patch("wiki_tool.mcp_tools.CodexAgentBridge") as bridge_cls:
+                bridge_cls.return_value.run_answer.return_value = codex_result
+                answer = adapter.answer_question("CAPM은 무엇인가?")
+
+            self.assertEqual(answer["provider"], "codex")
+            self.assertFalse(answer["fallback"])
+            self.assertIn("Codex가", answer["answer"])
+            bridge_cls.return_value.run_answer.assert_called_once_with("CAPM은 무엇인가?")
+
+    def test_answer_question_falls_back_when_codex_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            adapter = build_adapter(Path(tmp))
+            codex_result = CodexAgentResult(
+                ok=False,
+                status="codex_command_not_found",
+                answer="",
+                used_pages=[],
+                related_pages=[],
+                evidence=[],
+                error="Codex CLI command를 찾지 못했습니다.",
+            )
+
+            with patch.dict("os.environ", {"LLM_WIKI_AGENT_PROVIDER": "codex"}, clear=True), patch(
+                "wiki_tool.mcp_tools.CodexAgentBridge"
+            ) as bridge_cls:
+                bridge_cls.return_value.run_answer.return_value = codex_result
+                answer = adapter.answer_question("CAPM은 무엇인가?")
+
+            self.assertEqual(answer["provider"], "rule_based")
+            self.assertTrue(answer["fallback"])
+            self.assertEqual(answer["codex_status"], "codex_command_not_found")
+            self.assertIn("Codex CLI", answer["fallback_reason"])
+            self.assertIn("wiki 근거", answer["answer"])
 
     def test_answer_question_uses_question_type_specific_style(self):
         with tempfile.TemporaryDirectory() as tmp:
