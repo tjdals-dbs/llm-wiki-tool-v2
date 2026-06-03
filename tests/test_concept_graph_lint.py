@@ -50,6 +50,13 @@ class ConceptGraphLintTests(unittest.TestCase):
             concept_page = root / "wiki" / "concepts" / "capm.md"
             content = concept_page.read_text(encoding="utf-8")
             self.assertIn("## Definition", content)
+            self.assertIn("## Explanation", content)
+            self.assertIn("## Key Points", content)
+            self.assertLess(content.index("## Definition"), content.index("## Explanation"))
+            self.assertLess(content.index("## Explanation"), content.index("## Key Points"))
+            self.assertLess(content.index("## Key Points"), content.index("## Related Concepts"))
+            self.assertLess(content.index("## Related Concepts"), content.index("## Source Evidence"))
+            self.assertLess(content.index("## Source Evidence"), content.index("## Maintenance Notes"))
             self.assertIn("## Source Evidence", content)
             self.assertIn("[capm](../sources/capm.md)", content)
             self.assertNotIn("sha256", content.lower())
@@ -176,6 +183,46 @@ class ConceptGraphLintTests(unittest.TestCase):
             content = existing.read_text(encoding="utf-8")
             self.assertIn("[capm](../sources/capm.md)", content)
 
+    def test_existing_concept_filename_alias_prevents_duplicate_pages(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            domain = load_domain_config(write_domain(root), root=root)
+            existing = root / "wiki" / "concepts" / "capital-asset-pricing-model.md"
+            existing.parent.mkdir(parents=True)
+            existing.write_text(
+                "\n".join(
+                    [
+                        "# 기존 투자모형 문서",
+                        "",
+                        "## Definition",
+                        "",
+                        "사람이 작성한 설명입니다.",
+                        "",
+                        "## Source Evidence",
+                        "",
+                        "- [old](../sources/old.md)",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            raw_file = root / "raw" / "capm-model.md"
+            raw_file.parent.mkdir()
+            raw_file.write_text(
+                "# Capital Asset Pricing Model (CAPM)\nCapital Asset Pricing Model (CAPM)은 기대수익률과 위험을 연결한다.",
+                encoding="utf-8",
+            )
+            scan_raw_sources(domain)
+            summarize_new_sources(domain)
+
+            result = organize_pending_sources(domain)
+
+            self.assertEqual(result.merged_count, 1)
+            self.assertFalse((root / "wiki" / "concepts" / "capm.md").exists())
+            self.assertFalse((root / "wiki" / "concepts" / "capital-asset-pricing-model-capm.md").exists())
+            content = existing.read_text(encoding="utf-8")
+            self.assertIn("사람이 작성한 설명입니다.", content)
+            self.assertIn("[capm-model](../sources/capm-model.md)", content)
+
     def test_parenthesized_acronym_drives_new_concept_filename(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -224,6 +271,7 @@ class ConceptGraphLintTests(unittest.TestCase):
             self.assertTrue(discount_page.exists())
             dcf_content = dcf_page.read_text(encoding="utf-8")
             self.assertIn("## Definition", dcf_content)
+            self.assertIn("## Key Points", dcf_content)
             self.assertIn("DCF는 미래 현금흐름을 현재가치로 할인해 기업가치를 추정하는 방법이다.", dcf_content)
             self.assertIn("## Related Concepts", dcf_content)
             self.assertIn("- 할인율", dcf_content)

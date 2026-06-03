@@ -41,19 +41,20 @@ def organize_pending_sources(config: DomainConfig, limit: int | None = None) -> 
 
         source_link = f"[{Path(entry.source_page).stem}](../sources/{Path(entry.source_page).name})"
         organized_any = False
+        organized_targets_by_evidence: dict[str, Path] = {}
         for concept_name in candidate_concepts:
             if not _has_concept_evidence(concept_name, source):
                 continue
 
-            concept_path = _concept_page_path(config, concept_name)
             evidence = _evidence_for_concept(concept_name, source)
+            evidence_signature = _concept_evidence_signature(concept_name, source)
+            concept_path = organized_targets_by_evidence.get(evidence_signature) or _concept_page_path(config, concept_name)
             if concept_path.exists():
                 existing = concept_path.read_text(encoding="utf-8")
-                concept_path.write_text(
-                    _merge_concept_page(existing, source_link, evidence),
-                    encoding="utf-8",
-                )
-                merged_count += 1
+                merged = _merge_concept_page(existing, source_link, evidence)
+                if merged != existing:
+                    concept_path.write_text(merged, encoding="utf-8")
+                    merged_count += 1
             else:
                 concept_path.parent.mkdir(parents=True, exist_ok=True)
                 concept_path.write_text(
@@ -61,6 +62,7 @@ def organize_pending_sources(config: DomainConfig, limit: int | None = None) -> 
                     encoding="utf-8",
                 )
                 promoted_count += 1
+            organized_targets_by_evidence.setdefault(evidence_signature, concept_path)
             organized_any = True
 
         if not organized_any:
@@ -114,7 +116,8 @@ def _parse_source_summary(path: Path) -> ParsedSourceSummary:
 def _render_concept_page(name: str, source: ParsedSourceSummary, source_link: str) -> str:
     evidence = _evidence_for_concept(name, source)
     definition = _definition_for_concept(name, evidence, source.summary)
-    explanation = _explanation_items(evidence, source.key_points)
+    explanation = _explanation_for_concept(name, source.summary, evidence)
+    key_points = _key_points_for_concept(evidence, source.key_points)
     related = _related_concepts(name, source.candidate_concepts)
     return "\n".join(
         [
@@ -126,7 +129,11 @@ def _render_concept_page(name: str, source: ParsedSourceSummary, source_link: st
             "",
             "## Explanation",
             "",
-            _bullet_list(explanation),
+            explanation,
+            "",
+            "## Key Points",
+            "",
+            _bullet_list(key_points),
             "",
             "## Related Concepts",
             "",
@@ -218,9 +225,10 @@ def _concept_page_path(config: DomainConfig, concept_name: str) -> Path:
     concept_dir = config.wiki_dir / "concepts"
     if not concept_dir.exists():
         return candidate
-    incoming_aliases = _concept_aliases(concept_name)
+    incoming_aliases = _concept_aliases(concept_name) | _concept_aliases(_concept_slug(concept_name))
     for path in sorted(concept_dir.glob("*.md")):
-        existing_aliases = _concept_aliases(_title(path.read_text(encoding="utf-8")))
+        existing_content = path.read_text(encoding="utf-8")
+        existing_aliases = _concept_aliases(_title(existing_content)) | _concept_aliases(path.stem)
         if incoming_aliases & existing_aliases:
             return path
     return candidate
@@ -267,7 +275,15 @@ def _definition_for_concept(name: str, evidence: list[str], fallback_summary: st
     return fallback_summary or "source summary 근거를 바탕으로 추가 정리가 필요한 개념입니다."
 
 
-def _explanation_items(evidence: list[str], key_points: list[str]) -> list[str]:
+def _explanation_for_concept(name: str, summary: str, evidence: list[str]) -> str:
+    if summary:
+        return summary
+    if evidence:
+        return f"{name}은 source evidence에서 반복적으로 확인된 개념입니다."
+    return "source summary 근거를 바탕으로 추가 설명이 필요한 개념입니다."
+
+
+def _key_points_for_concept(evidence: list[str], key_points: list[str]) -> list[str]:
     return _dedupe(evidence + key_points)[:6]
 
 
@@ -291,6 +307,23 @@ def _dedupe(items: list[str]) -> list[str]:
         seen.add(key)
         result.append(cleaned)
     return result
+
+
+def _evidence_signature(evidence: list[str]) -> str:
+    normalized = [re.sub(r"\s+", " ", item).strip().casefold() for item in evidence if item.strip()]
+    if not normalized:
+        return ""
+    return " | ".join(sorted(set(normalized)))
+
+
+def _concept_evidence_signature(name: str, source: ParsedSourceSummary) -> str:
+    direct = source.candidate_concept_evidence.get(name)
+    if not direct:
+        direct = [item for item in source.evidence + source.key_points if name.casefold() in item.casefold()]
+    signature = _evidence_signature(direct)
+    if signature:
+        return signature
+    return f"concept:{_normalize_concept_name(name)}"
 
 
 def _bullet_list(items: list[str]) -> str:
