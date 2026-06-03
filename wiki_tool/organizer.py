@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import unquote
 
 from .agent_hooks import AgentHookResult, draft_concept_update_with_agent
 from .agent_provider import PROVIDER_CODEX, resolve_agent_provider
@@ -51,13 +52,18 @@ def organize_pending_sources(config: DomainConfig, limit: int | None = None) -> 
         source_link = f"[{Path(entry.source_page).stem}](../sources/{Path(entry.source_page).name})"
         organized_any = False
         organized_targets_by_evidence: dict[str, Path] = {}
+        planned_concept_targets = _planned_concept_targets(config, source, candidate_concepts)
         for concept_name in candidate_concepts:
             if not _has_concept_evidence(concept_name, source):
                 continue
 
             evidence = _evidence_for_concept(concept_name, source)
             evidence_signature = _concept_evidence_signature(concept_name, source)
-            concept_path = organized_targets_by_evidence.get(evidence_signature) or _concept_page_path(config, concept_name)
+            concept_path = (
+                organized_targets_by_evidence.get(evidence_signature)
+                or planned_concept_targets.get(concept_name)
+                or _concept_page_path(config, concept_name)
+            )
             hook_result: AgentHookResult | None = None
             validation: dict[str, str | bool] = {"ok": False, "reason": "codex_not_used"}
             if provider == PROVIDER_CODEX:
@@ -81,7 +87,7 @@ def organize_pending_sources(config: DomainConfig, limit: int | None = None) -> 
                 concept_path.parent.mkdir(parents=True, exist_ok=True)
                 if _can_use_codex_draft(hook_result, validation):
                     concept_page = _with_concept_pipeline_metadata(
-                        hook_result.draft,
+                        _normalize_concept_draft_links(hook_result.draft, config, planned_concept_targets),
                         provider="codex",
                         codex_status=hook_result.status,
                         fallback=False,
@@ -228,6 +234,70 @@ def _concept_agent_payload(concept_name: str, source_link: str, source_page_cont
             source_page_content,
         ]
     )
+
+
+def _planned_concept_targets(
+    config: DomainConfig,
+    source: ParsedSourceSummary,
+    candidate_concepts: list[str],
+) -> dict[str, Path]:
+    planned: dict[str, Path] = {}
+    targets_by_evidence: dict[str, Path] = {}
+    for concept_name in candidate_concepts:
+        if not _has_concept_evidence(concept_name, source):
+            continue
+        evidence_signature = _concept_evidence_signature(concept_name, source)
+        concept_path = targets_by_evidence.get(evidence_signature)
+        if concept_path is None:
+            concept_path = _concept_page_path(config, concept_name)
+            targets_by_evidence[evidence_signature] = concept_path
+        planned[concept_name] = concept_path
+    return planned
+
+
+def _normalize_concept_draft_links(
+    draft: str,
+    config: DomainConfig,
+    planned_concept_targets: dict[str, Path],
+) -> str:
+    target_by_alias: dict[str, str] = {}
+
+    def add_aliases(value: str, target_name: str) -> None:
+        for alias in _concept_aliases(value):
+            target_by_alias.setdefault(alias, target_name)
+
+    concept_dir = config.wiki_dir / "concepts"
+    if concept_dir.exists():
+        for path in sorted(concept_dir.glob("*.md")):
+            add_aliases(path.stem, path.name)
+            add_aliases(_title(path.read_text(encoding="utf-8")), path.name)
+
+    for concept_name, target_path in planned_concept_targets.items():
+        add_aliases(concept_name, target_path.name)
+        add_aliases(target_path.stem, target_path.name)
+
+    def replace_link(match: re.Match[str]) -> str:
+        label = match.group(1).strip()
+        href = match.group(2).strip()
+        if _is_non_concept_href(href):
+            return match.group(0)
+        link_aliases = _concept_aliases(label) | _concept_aliases(Path(unquote(href)).stem)
+        for alias in link_aliases:
+            target = target_by_alias.get(alias)
+            if target:
+                return f"[{label}]({target})"
+        return label
+
+    return re.sub(r"\[([^\]]+)\]\(([^)]+)\)", replace_link, draft)
+
+
+def _is_non_concept_href(href: str) -> bool:
+    normalized = href.strip().replace("\\", "/")
+    if normalized.startswith(("#", "http://", "https://", "mailto:")):
+        return True
+    if "/" in normalized:
+        return True
+    return not normalized.casefold().endswith(".md")
 
 
 def _with_concept_pipeline_metadata(

@@ -208,6 +208,113 @@ class ConceptGraphLintTests(unittest.TestCase):
             self.assertIn("## Source Evidence", content)
             self.assertIn("missing_source_evidence", content)
 
+    def test_codex_concept_draft_links_are_normalized_before_lint(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            domain = load_domain_config(write_domain(root), root=root)
+            source_page = root / "wiki" / "sources" / "capm.md"
+            source_page.parent.mkdir(parents=True)
+            source_page.write_text(
+                "\n".join(
+                    [
+                        "# CAPM Note",
+                        "",
+                        "## Summary",
+                        "CAPM은 기대수익률, 베타, 시장 포트폴리오를 연결하는 모형이다.",
+                        "",
+                        "## Key Points",
+                        "- CAPM은 기대수익률을 설명한다.",
+                        "- 베타는 시장 포트폴리오 변화에 대한 민감도다.",
+                        "",
+                        "## Evidence",
+                        "- CAPM은 자산의 기대수익률을 무위험수익률, 베타, 시장위험프리미엄으로 설명하는 모형이다.",
+                        "- 베타는 시장 포트폴리오 변화에 대한 민감도를 나타낸다.",
+                        "- 시장 포트폴리오는 시장 전체의 움직임을 대표하는 포트폴리오다.",
+                        "",
+                        "## Candidate Concepts",
+                        "- CAPM",
+                        "- 베타",
+                        "- 시장 포트폴리오",
+                        "",
+                        "## Candidate Concept Evidence",
+                        "- CAPM: CAPM은 자산의 기대수익률을 설명하는 모형이다.",
+                        "- 베타: 베타는 시장 포트폴리오 변화에 대한 민감도를 나타낸다.",
+                        "- 시장 포트폴리오: 시장 포트폴리오는 시장 전체의 움직임을 대표하는 포트폴리오다.",
+                        "",
+                        "## Maintenance Notes",
+                        "- quality: usable",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            write_manifest(
+                domain.manifest_path,
+                {
+                    "capm.md": ManifestEntry(
+                        path="capm.md",
+                        sha256="safe-test-hash",
+                        source_type="markdown",
+                        status="summarized",
+                        detected_at="2026-06-03T00:00:00+00:00",
+                        source_page="wiki/sources/capm.md",
+                    )
+                },
+            )
+
+            def draft_for(payload: str) -> AgentHookResult:
+                target = payload.splitlines()[0].split(":", 1)[1].strip()
+                related = [
+                    "- [CAPM](CAPM.md)",
+                    "- [시장 포트폴리오](시장%20포트폴리오.md)",
+                    "- [없는 개념](missing.md)",
+                ]
+                if target == "CAPM":
+                    related = ["- [베타](베타.md)"]
+                return AgentHookResult(
+                    role="concept",
+                    provider="codex",
+                    fallback=False,
+                    status="ok",
+                    draft="\n".join(
+                        [
+                            f"# {target}",
+                            "",
+                            "## Definition",
+                            "",
+                            f"{target}에 대한 Codex draft입니다.",
+                            "",
+                            "## Explanation",
+                            "",
+                            "source summary를 바탕으로 정리했습니다.",
+                            "",
+                            "## Related Concepts",
+                            "",
+                            *related,
+                            "",
+                            "## Source Evidence",
+                            "",
+                            "- [capm](../sources/capm.md)",
+                            "- CAPM source evidence",
+                        ]
+                    ),
+                )
+
+            with patch.dict("os.environ", {"LLM_WIKI_AGENT_PROVIDER": "codex"}, clear=True), patch(
+                "wiki_tool.organizer.draft_concept_update_with_agent",
+                side_effect=draft_for,
+            ):
+                result = organize_pending_sources(domain)
+
+            beta_content = (root / "wiki" / "concepts" / "베타.md").read_text(encoding="utf-8")
+            self.assertEqual(result.codex_used_count, 3)
+            self.assertNotIn("(시장%20포트폴리오.md)", beta_content)
+            self.assertNotIn("(missing.md)", beta_content)
+            self.assertIn("[시장 포트폴리오](시장-포트폴리오.md)", beta_content)
+            self.assertIn("없는 개념", beta_content)
+
+            lint_result = run_wiki_lint(domain)
+            self.assertTrue(lint_result.ok, lint_result.issues)
+
     def test_codex_concept_merge_preserves_existing_human_content(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
