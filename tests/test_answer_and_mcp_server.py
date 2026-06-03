@@ -81,6 +81,21 @@ class AnswerAndMcpServerTests(unittest.TestCase):
             self.assertEqual(answer["used_pages"], [])
             self.assertEqual(answer["evidence"], [])
 
+    def test_answer_question_uses_question_type_specific_style(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            adapter = build_adapter(Path(tmp))
+
+            definition = adapter.answer_question("CAPM은 무엇인가?")
+            reason = adapter.answer_question("CAPM은 왜 중요한가?")
+            comparison = adapter.answer_question("CAPM과 베타의 차이는?")
+            how = adapter.answer_question("CAPM은 어떻게 활용해?")
+
+            self.assertIn("정의하면", definition["answer"])
+            self.assertIn("핵심 이유", reason["answer"])
+            self.assertIn("비교의 기준", comparison["answer"])
+            self.assertIn("활용 방법", how["answer"])
+            self.assertLessEqual(len(definition["evidence"]), 3)
+
     def test_answer_evidence_filters_operational_metadata(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

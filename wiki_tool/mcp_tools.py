@@ -98,7 +98,7 @@ class WikiToolAdapter:
         used_paths = {evidence[0]["path"]}
         used_pages = [item for item in context if item["path"] in used_paths]
         related_pages = [item for item in context if item["path"] not in used_paths]
-        answer = _compose_evidence_answer(evidence)
+        answer = _compose_evidence_answer(query, evidence)
         return {
             "status": "ok",
             "answer": answer,
@@ -312,12 +312,59 @@ def _dedupe_evidence(items: list[dict[str, str]]) -> list[dict[str, str]]:
     return result
 
 
-def _compose_evidence_answer(evidence: list[dict[str, str]]) -> str:
+def _compose_evidence_answer(query: str, evidence: list[dict[str, str]]) -> str:
     primary = evidence[0]["text"]
+    secondary = evidence[1]["text"] if len(evidence) > 1 else ""
+    question_type = _question_type(query)
+    if question_type == "definition":
+        return _join_answer_parts(
+            [
+                f"wiki 근거상 정의하면, {primary}",
+                f"보조 근거로는 {secondary}" if secondary else "",
+            ]
+        )
+    if question_type == "reason":
+        return _join_answer_parts(
+            [
+                f"wiki 근거를 보면 핵심 이유는 {primary}",
+                f"관련 메커니즘은 {secondary}" if secondary else "",
+            ]
+        )
+    if question_type == "comparison":
+        return _join_answer_parts(
+            [
+                f"wiki 근거상 비교의 기준은 {primary}",
+                f"비교할 때 함께 볼 근거는 {secondary}" if secondary else "",
+            ]
+        )
+    if question_type == "how":
+        return _join_answer_parts(
+            [
+                f"wiki 근거상 활용 방법은 {primary}",
+                f"실행하거나 해석할 때는 {secondary}" if secondary else "",
+            ]
+        )
     if len(evidence) == 1:
         return f"wiki 근거를 기준으로 답하면, {primary}"
     secondary = evidence[1]["text"]
     return f"wiki 근거를 기준으로 답하면, {primary} 추가 근거로 {secondary}"
+
+
+def _question_type(query: str) -> str:
+    normalized = query.casefold()
+    if re.search(r"(차이|비교|다른|vs|versus)", normalized):
+        return "comparison"
+    if re.search(r"(어떻게|방법|절차|활용|사용|적용)", normalized):
+        return "how"
+    if re.search(r"(왜|이유|원인|메커니즘|기전)", normalized):
+        return "reason"
+    if re.search(r"(무엇|뭐|정의|이란|란\?)", normalized):
+        return "definition"
+    return "general"
+
+
+def _join_answer_parts(parts: list[str]) -> str:
+    return " ".join(part.strip() for part in parts if part.strip())
 
 
 def _query_terms(query: str) -> list[str]:
