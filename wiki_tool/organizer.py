@@ -212,17 +212,35 @@ def _slug(value: str) -> str:
 
 
 def _concept_page_path(config: DomainConfig, concept_name: str) -> Path:
-    candidate = config.wiki_dir / "concepts" / f"{_slug(concept_name)}.md"
+    candidate = config.wiki_dir / "concepts" / f"{_concept_slug(concept_name)}.md"
     if candidate.exists():
         return candidate
     concept_dir = config.wiki_dir / "concepts"
     if not concept_dir.exists():
         return candidate
-    normalized_name = _normalize_concept_name(concept_name)
+    incoming_aliases = _concept_aliases(concept_name)
     for path in sorted(concept_dir.glob("*.md")):
-        if _normalize_concept_name(_title(path.read_text(encoding="utf-8"))) == normalized_name:
+        existing_aliases = _concept_aliases(_title(path.read_text(encoding="utf-8")))
+        if incoming_aliases & existing_aliases:
             return path
     return candidate
+
+
+def _concept_slug(concept_name: str) -> str:
+    acronym = _concept_acronym(concept_name)
+    if acronym:
+        return _slug(acronym)
+    return _slug(concept_name)
+
+
+def _concept_acronym(concept_name: str) -> str:
+    parenthesized = re.search(r"\(([A-Za-z][A-Za-z0-9]{1,})\)", concept_name)
+    if parenthesized:
+        return parenthesized.group(1)
+    standalone = re.fullmatch(r"[A-Z][A-Z0-9]{2,}", concept_name.strip())
+    if standalone:
+        return standalone.group(0)
+    return ""
 
 
 def _has_concept_evidence(name: str, source: ParsedSourceSummary) -> bool:
@@ -300,7 +318,19 @@ def _merge_concept_page(existing: str, source_link: str, evidence: list[str]) ->
 
 
 def _normalize_concept_name(value: str) -> str:
-    return re.sub(r"\s+", " ", value).strip().casefold()
+    normalized = re.sub(r"\([^)]*\)", " ", value)
+    normalized = re.sub(r"[^0-9A-Za-z가-힣]+", " ", normalized)
+    return re.sub(r"\s+", " ", normalized).strip().casefold()
+
+
+def _concept_aliases(value: str) -> set[str]:
+    aliases = {_normalize_concept_name(value)}
+    for match in re.finditer(r"\(([^)]+)\)", value):
+        aliases.add(_normalize_concept_name(match.group(1)))
+    acronym = _concept_acronym(value)
+    if acronym:
+        aliases.add(_normalize_concept_name(acronym))
+    return {alias for alias in aliases if alias}
 
 
 def _is_generic_concept(value: str) -> bool:

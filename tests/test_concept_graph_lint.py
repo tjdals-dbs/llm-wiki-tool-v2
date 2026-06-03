@@ -104,6 +104,60 @@ class ConceptGraphLintTests(unittest.TestCase):
             self.assertIn("[first](../sources/first.md)", content)
             self.assertIn("[second](../sources/second.md)", content)
 
+    def test_existing_concept_alias_prevents_duplicate_pages(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            domain = load_domain_config(write_domain(root), root=root)
+            existing = root / "wiki" / "concepts" / "capm-model.md"
+            existing.parent.mkdir(parents=True)
+            existing.write_text(
+                "\n".join(
+                    [
+                        "# CAPM (Capital Asset Pricing Model)",
+                        "",
+                        "## Definition",
+                        "",
+                        "CAPM은 기존 개념 문서입니다.",
+                        "",
+                        "## Source Evidence",
+                        "",
+                        "- [old](../sources/old.md)",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            raw_file = root / "raw" / "capm.md"
+            raw_file.parent.mkdir()
+            raw_file.write_text("# CAPM\nCAPM은 기대수익률과 위험을 연결한다.", encoding="utf-8")
+            scan_raw_sources(domain)
+            summarize_new_sources(domain)
+
+            result = organize_pending_sources(domain)
+
+            self.assertEqual(result.merged_count, 1)
+            self.assertFalse((root / "wiki" / "concepts" / "capm.md").exists())
+            content = existing.read_text(encoding="utf-8")
+            self.assertIn("[capm](../sources/capm.md)", content)
+
+    def test_parenthesized_acronym_drives_new_concept_filename(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            domain = load_domain_config(write_domain(root), root=root)
+            raw_file = root / "raw" / "dcf.md"
+            raw_file.parent.mkdir()
+            raw_file.write_text(
+                "# Discounted Cash Flow (DCF)\nDCF는 미래 현금흐름을 현재가치로 할인해 기업가치를 추정하는 방법이다.",
+                encoding="utf-8",
+            )
+            scan_raw_sources(domain)
+            summarize_new_sources(domain)
+
+            result = organize_pending_sources(domain)
+
+            self.assertEqual(result.promoted_count, 1)
+            self.assertTrue((root / "wiki" / "concepts" / "dcf.md").exists())
+            self.assertFalse((root / "wiki" / "concepts" / "discounted-cash-flow-dcf.md").exists())
+
     def test_one_source_promotes_multiple_evidence_backed_concepts(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
