@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import json
+import os
 import shlex
 import subprocess
+import tempfile
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Callable
 
-from .agent_provider import AgentProviderConfig, load_agent_provider_config
 from .agent_prompts import build_answer_prompt, build_concept_prompt, build_ingest_prompt, build_review_prompt
+from .agent_provider import AgentProviderConfig, load_agent_provider_config
 
 
 CODEX_AGENT_TIMEOUT_SECONDS = 120
@@ -58,8 +61,14 @@ class CodexAgentBridge:
         self.runner = runner or subprocess.run
         self.timeout_seconds = timeout_seconds
 
-    def run_answer(self, question: str) -> CodexAgentResult:
-        return self.run_role("answer", build_answer_prompt(question))
+    def run_answer(
+        self,
+        question: str,
+        *,
+        wiki_context: list[dict[str, Any]] | None = None,
+        evidence: list[dict[str, Any]] | None = None,
+    ) -> CodexAgentResult:
+        return self.run_role("answer", build_answer_prompt(question, wiki_context=wiki_context, evidence=evidence))
 
     def run_ingest(self, source_text: str) -> CodexAgentResult:
         return self.run_role("ingest", build_ingest_prompt(source_text))
@@ -72,10 +81,17 @@ class CodexAgentBridge:
 
     def run_role(self, role: str, prompt: str) -> CodexAgentResult:
         config = self.config or load_agent_provider_config(role)
-        command = build_codex_command(config, role, prompt)
+        output_path = _temporary_output_path()
+        command = build_codex_command(
+            config,
+            role,
+            "Read the complete task from stdin and return only the requested final output.",
+            output_path=str(output_path),
+        )
         try:
             completed = self.runner(
                 command,
+                input=prompt,
                 text=True,
                 capture_output=True,
                 encoding="utf-8",
@@ -84,25 +100,40 @@ class CodexAgentBridge:
                 check=False,
             )
         except FileNotFoundError as exc:
+            _remove_temporary_output(output_path)
             return _failure("codex_command_not_found", f"Codex CLI command를 찾지 못했습니다: {command[0]}", exc)
         except subprocess.TimeoutExpired as exc:
+            _remove_temporary_output(output_path)
             return _failure("codex_timeout", f"Codex CLI 실행 시간이 초과되었습니다: {self.timeout_seconds}s", exc)
 
         stdout = completed.stdout or ""
         stderr = completed.stderr or ""
         if completed.returncode != 0:
+            _remove_temporary_output(output_path)
             message = stderr.strip() or stdout.strip() or f"exit code {completed.returncode}"
             return _failure("codex_error", f"Codex CLI 실행 실패: {message}", None, raw_text=stdout)
-        return parse_codex_output(stdout)
+
+        message = _read_output_message(output_path) or stdout
+        _remove_temporary_output(output_path)
+        return parse_codex_output(message)
 
 
-def build_codex_command(config: AgentProviderConfig, role: str, prompt: str) -> list[str]:
+def build_codex_command(
+    config: AgentProviderConfig,
+    role: str,
+    prompt: str,
+    *,
+    output_path: str | None = None,
+) -> list[str]:
     command = shlex.split(config.codex_command, posix=False)
     if not command:
         command = ["codex.cmd"]
     args = [*command, "exec"]
     if config.model:
         args.extend(["--model", config.model])
+    args.extend(["--skip-git-repo-check", "--ephemeral"])
+    if output_path:
+        args.extend(["--output-last-message", output_path])
     args.extend(["--sandbox", ROLE_SANDBOX.get(role, "workspace-write"), prompt])
     return args
 
@@ -111,9 +142,8 @@ def parse_codex_output(stdout: str) -> CodexAgentResult:
     raw = stdout.strip()
     if not raw:
         return _failure("codex_empty_output", "Codex CLI가 빈 응답을 반환했습니다.", None)
-    try:
-        parsed = json.loads(raw)
-    except json.JSONDecodeError:
+    parsed = _extract_json_object(raw)
+    if parsed is None:
         return CodexAgentResult(
             ok=True,
             status="ok",
@@ -134,10 +164,53 @@ def parse_codex_output(stdout: str) -> CodexAgentResult:
     )
 
 
+def _extract_json_object(raw: str) -> dict[str, Any] | None:
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        parsed = None
+    if isinstance(parsed, dict):
+        return parsed
+
+    decoder = json.JSONDecoder()
+    for index, char in enumerate(raw):
+        if char != "{":
+            continue
+        try:
+            parsed, _end = decoder.raw_decode(raw[index:])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+    return None
+
+
 def _list_of_dicts(value: Any) -> list[dict[str, Any]]:
     if not isinstance(value, list):
         return []
     return [item for item in value if isinstance(item, dict)]
+
+
+def _temporary_output_path() -> Path:
+    handle, name = tempfile.mkstemp(prefix="llm_wiki_codex_", suffix=".txt")
+    os.close(handle)
+    return Path(name)
+
+
+def _read_output_message(path: Path) -> str:
+    try:
+        if path.exists():
+            return path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+    return ""
+
+
+def _remove_temporary_output(path: Path) -> None:
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        pass
 
 
 def _failure(status: str, message: str, exc: BaseException | None, *, raw_text: str = "") -> CodexAgentResult:

@@ -311,7 +311,7 @@ def _section_lines(content: str, heading: str) -> list[str]:
 
 def _quality(content: str) -> str:
     match = re.search(r"^- quality:\s*(\w+)", content, flags=re.MULTILINE)
-    return match.group(1) if match else "weak"
+    return match.group(1) if match else "usable"
 
 
 def _slug(value: str) -> str:

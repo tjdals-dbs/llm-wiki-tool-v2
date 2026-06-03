@@ -8,6 +8,7 @@ from wiki_tool.agent_hooks import AgentHookResult
 from wiki_tool.config import load_domain_config
 from wiki_tool.graph import build_wiki_graph, get_related_pages
 from wiki_tool.lint import run_wiki_lint
+from wiki_tool.manifest import ManifestEntry, write_manifest
 from wiki_tool.organizer import organize_pending_sources
 from wiki_tool.scanner import scan_raw_sources
 from wiki_tool.summarizer import summarize_new_sources
@@ -83,6 +84,52 @@ class ConceptGraphLintTests(unittest.TestCase):
             lint_result = run_wiki_lint(domain)
             self.assertTrue(lint_result.ok)
             self.assertEqual(lint_result.issues, [])
+
+    def test_codex_source_without_quality_review_can_promote_concept(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            domain = load_domain_config(write_domain(root), root=root)
+            source_page = root / "wiki" / "sources" / "capm.md"
+            source_page.parent.mkdir(parents=True)
+            source_page.write_text(
+                "\n".join(
+                    [
+                        "# CAPM",
+                        "",
+                        "## Summary",
+                        "CAPM은 기대수익률과 체계적 위험의 관계를 설명하는 금융 모델이다.",
+                        "",
+                        "## Key Points",
+                        "- CAPM은 기대수익률과 체계적 위험 간의 관계를 설명한다.",
+                        "",
+                        "## Evidence",
+                        "- CAPM은 기대수익률과 체계적 위험의 관계를 설명하는 금융 모델이다.",
+                        "",
+                        "## Candidate Concepts",
+                        "- CAPM",
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            write_manifest(
+                domain.manifest_path,
+                {
+                    "capm.md": ManifestEntry(
+                        path="capm.md",
+                        sha256="safe-test-hash",
+                        source_type="markdown",
+                        status="summarized",
+                        detected_at="2026-06-03T00:00:00+00:00",
+                        source_page="wiki/sources/capm.md",
+                    )
+                },
+            )
+
+            result = organize_pending_sources(domain)
+
+            self.assertEqual(result.promoted_count, 1)
+            self.assertTrue((root / "wiki" / "concepts" / "capm.md").exists())
 
     def test_codex_concept_draft_is_used_when_valid(self):
         with tempfile.TemporaryDirectory() as tmp:

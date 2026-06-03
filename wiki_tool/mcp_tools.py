@@ -93,25 +93,34 @@ class WikiToolAdapter:
     def answer_question(self, query: str) -> dict[str, Any]:
         provider_config = load_agent_provider_config("answer")
         if provider_config.provider == PROVIDER_CODEX:
-            codex_result = CodexAgentBridge(provider_config).run_answer(query)
-            if codex_result.ok:
+            context = self.ask_wiki_context(query, limit=5)
+            evidence = self._collect_answer_evidence(query, context)
+            codex_result = CodexAgentBridge(provider_config).run_answer(query, wiki_context=context, evidence=evidence)
+            validation_error = _codex_answer_validation_error(codex_result, evidence)
+            if codex_result.ok and not validation_error:
                 payload = codex_result.to_answer_payload()
                 payload["fallback"] = False
                 return payload
-            fallback = self._answer_question_rule_based(query)
+            fallback = self._answer_question_rule_based(query, context=context, evidence=evidence)
             fallback["provider"] = "rule_based"
             fallback["fallback"] = True
-            fallback["fallback_reason"] = codex_result.error
-            fallback["codex_status"] = codex_result.status
+            fallback["fallback_reason"] = codex_result.error or f"Codex answer draft invalid: {validation_error}"
+            fallback["codex_status"] = codex_result.status if not validation_error else "codex_invalid_answer"
             return fallback
         answer = self._answer_question_rule_based(query)
         answer["provider"] = "rule_based"
         answer["fallback"] = False
         return answer
 
-    def _answer_question_rule_based(self, query: str) -> dict[str, Any]:
-        context = self.ask_wiki_context(query, limit=5)
-        evidence = self._collect_answer_evidence(query, context)
+    def _answer_question_rule_based(
+        self,
+        query: str,
+        *,
+        context: list[dict[str, Any]] | None = None,
+        evidence: list[dict[str, str]] | None = None,
+    ) -> dict[str, Any]:
+        context = context if context is not None else self.ask_wiki_context(query, limit=5)
+        evidence = evidence if evidence is not None else self._collect_answer_evidence(query, context)
         if not evidence:
             return {
                 "status": "no_evidence",
@@ -345,6 +354,20 @@ def _dedupe_evidence(items: list[dict[str, str]]) -> list[dict[str, str]]:
         seen.add(key)
         result.append(item)
     return result
+
+
+def _codex_answer_validation_error(result: Any, local_evidence: list[dict[str, Any]]) -> str:
+    if not result.ok:
+        return ""
+    if not str(result.answer or "").strip():
+        return "missing_answer"
+    if result.status == "no_evidence":
+        return "" if not local_evidence else "ignored_available_evidence"
+    if result.status != "ok":
+        return f"unsupported_status:{result.status}"
+    if not result.evidence and not result.used_pages:
+        return "missing_evidence"
+    return ""
 
 
 def _compose_evidence_answer(query: str, evidence: list[dict[str, str]]) -> str:

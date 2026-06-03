@@ -108,7 +108,10 @@ class AnswerAndMcpServerTests(unittest.TestCase):
             self.assertEqual(answer["provider"], "codex")
             self.assertFalse(answer["fallback"])
             self.assertIn("Codex가", answer["answer"])
-            bridge_cls.return_value.run_answer.assert_called_once_with("CAPM은 무엇인가?")
+            call = bridge_cls.return_value.run_answer.call_args
+            self.assertEqual(call.args, ("CAPM은 무엇인가?",))
+            self.assertIn("wiki_context", call.kwargs)
+            self.assertIn("evidence", call.kwargs)
 
     def test_answer_question_falls_back_when_codex_fails(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -134,6 +137,29 @@ class AnswerAndMcpServerTests(unittest.TestCase):
             self.assertEqual(answer["codex_status"], "codex_command_not_found")
             self.assertIn("Codex CLI", answer["fallback_reason"])
             self.assertIn("wiki 근거", answer["answer"])
+
+    def test_answer_question_falls_back_when_codex_answer_has_no_evidence(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            adapter = build_adapter(Path(tmp))
+            codex_result = CodexAgentResult(
+                ok=True,
+                status="ok",
+                answer="알겠습니다. 질문을 보내주세요.",
+                used_pages=[],
+                related_pages=[],
+                evidence=[],
+            )
+
+            with patch.dict("os.environ", {"LLM_WIKI_AGENT_PROVIDER": "codex"}, clear=True), patch(
+                "wiki_tool.mcp_tools.CodexAgentBridge"
+            ) as bridge_cls:
+                bridge_cls.return_value.run_answer.return_value = codex_result
+                answer = adapter.answer_question("CAPM은 무엇인가?")
+
+            self.assertEqual(answer["provider"], "rule_based")
+            self.assertTrue(answer["fallback"])
+            self.assertEqual(answer["codex_status"], "codex_invalid_answer")
+            self.assertIn("missing_evidence", answer["fallback_reason"])
 
     def test_answer_question_uses_question_type_specific_style(self):
         with tempfile.TemporaryDirectory() as tmp:
