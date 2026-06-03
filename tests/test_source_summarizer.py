@@ -4,6 +4,7 @@ import unittest
 from unittest.mock import patch
 from pathlib import Path
 
+from wiki_tool.agent_hooks import AgentHookResult
 from wiki_tool.config import load_domain_config
 from wiki_tool.scanner import scan_raw_sources
 from wiki_tool.summarizer import summarize_new_sources
@@ -44,6 +45,9 @@ class SourceSummarizerTests(unittest.TestCase):
             result = summarize_new_sources(domain)
 
             self.assertEqual(result.summarized_count, 1)
+            self.assertEqual(result.provider, "rule_based")
+            self.assertEqual(result.codex_used_count, 0)
+            self.assertEqual(result.fallback_count, 0)
             source_page = root / "wiki" / "sources" / "capm.md"
             content = source_page.read_text(encoding="utf-8")
             self.assertIn("## Source Metadata", content)
@@ -58,6 +62,114 @@ class SourceSummarizerTests(unittest.TestCase):
             rows = list(csv.DictReader(domain.manifest_path.read_text(encoding="utf-8").splitlines()))
             self.assertEqual(rows[0]["status"], "summarized")
             self.assertEqual(rows[0]["source_page"], "wiki/sources/capm.md")
+
+    def test_codex_ingest_draft_is_used_when_valid(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            domain = load_domain_config(write_domain(root), root=root)
+            raw_file = root / "raw" / "capm.md"
+            raw_file.parent.mkdir()
+            raw_file.write_text("# CAPM\nCAPM은 기대수익률과 위험을 연결한다.", encoding="utf-8")
+            scan_raw_sources(domain)
+            codex_draft = "\n".join(
+                [
+                    "# Codex CAPM Source",
+                    "",
+                    "## Summary",
+                    "",
+                    "Codex가 정리한 요약입니다.",
+                    "",
+                    "## Key Points",
+                    "",
+                    "- CAPM은 위험과 수익을 연결한다.",
+                    "",
+                    "## Evidence",
+                    "",
+                    "- CAPM은 기대수익률과 위험을 연결한다.",
+                    "",
+                    "## Candidate Concepts",
+                    "",
+                    "- CAPM",
+                ]
+            )
+
+            with patch.dict("os.environ", {"LLM_WIKI_AGENT_PROVIDER": "codex"}, clear=True), patch(
+                "wiki_tool.summarizer.draft_source_summary_with_agent"
+            ) as hook:
+                hook.return_value = AgentHookResult(
+                    role="ingest",
+                    provider="codex",
+                    fallback=False,
+                    status="ok",
+                    draft=codex_draft,
+                )
+                result = summarize_new_sources(domain)
+
+            content = (root / "wiki" / "sources" / "capm.md").read_text(encoding="utf-8")
+            self.assertEqual(result.provider, "codex")
+            self.assertEqual(result.codex_used_count, 1)
+            self.assertEqual(result.fallback_count, 0)
+            self.assertIn("Codex가 정리한 요약입니다.", content)
+            self.assertIn("## Agent Metadata", content)
+            self.assertIn("- provider: codex", content)
+            self.assertIn("- fallback: false", content)
+            hook.assert_called_once()
+
+    def test_codex_ingest_draft_missing_required_sections_falls_back(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            domain = load_domain_config(write_domain(root), root=root)
+            raw_file = root / "raw" / "capm.md"
+            raw_file.parent.mkdir()
+            raw_file.write_text("# CAPM\nCAPM은 기대수익률과 위험을 연결한다.", encoding="utf-8")
+            scan_raw_sources(domain)
+
+            with patch.dict("os.environ", {"LLM_WIKI_AGENT_PROVIDER": "codex"}, clear=True), patch(
+                "wiki_tool.summarizer.draft_source_summary_with_agent"
+            ) as hook:
+                hook.return_value = AgentHookResult(
+                    role="ingest",
+                    provider="codex",
+                    fallback=False,
+                    status="ok",
+                    draft="# Broken\n\n## Summary\n\n섹션이 부족합니다.",
+                )
+                result = summarize_new_sources(domain)
+
+            content = (root / "wiki" / "sources" / "capm.md").read_text(encoding="utf-8")
+            self.assertEqual(result.codex_used_count, 0)
+            self.assertEqual(result.fallback_count, 1)
+            self.assertIn("CAPM은 기대수익률", content)
+            self.assertIn("- fallback: true", content)
+            self.assertIn("missing_sections", content)
+
+    def test_codex_ingest_failure_falls_back_to_rule_based_page(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            domain = load_domain_config(write_domain(root), root=root)
+            raw_file = root / "raw" / "capm.md"
+            raw_file.parent.mkdir()
+            raw_file.write_text("# CAPM\nCAPM은 기대수익률과 위험을 연결한다.", encoding="utf-8")
+            scan_raw_sources(domain)
+
+            with patch.dict("os.environ", {"LLM_WIKI_AGENT_PROVIDER": "codex"}, clear=True), patch(
+                "wiki_tool.summarizer.draft_source_summary_with_agent"
+            ) as hook:
+                hook.return_value = AgentHookResult(
+                    role="ingest",
+                    provider="rule_based",
+                    fallback=True,
+                    status="codex_timeout",
+                    draft="",
+                    error="timeout",
+                )
+                result = summarize_new_sources(domain)
+
+            content = (root / "wiki" / "sources" / "capm.md").read_text(encoding="utf-8")
+            self.assertEqual(result.fallback_count, 1)
+            self.assertIn("CAPM은 기대수익률", content)
+            self.assertIn("codex_timeout", content)
+            self.assertIn("timeout", content)
 
     def test_weak_pdf_is_left_as_needs_review_with_pdf_vision_action(self):
         with tempfile.TemporaryDirectory() as tmp:
