@@ -12,9 +12,11 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from wiki_tool.agent_runtime import run_maintenance_once
 from wiki_tool.config import load_domain_config
+from wiki_tool.env_loader import load_dotenv_if_present
 
 
 def main(argv: list[str] | None = None) -> int:
+    load_dotenv_if_present(PROJECT_ROOT)
     parser = argparse.ArgumentParser(description="LLM Wiki agent maintenance runtime")
     parser.add_argument("--domain", required=True, help="domain.yml 경로")
     parser.add_argument("--once", action="store_true", help="한 번만 실행하고 종료")

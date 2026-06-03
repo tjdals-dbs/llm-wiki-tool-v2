@@ -11,10 +11,12 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from wiki_tool.config import load_domain_config
+from wiki_tool.env_loader import load_dotenv_if_present
 from wiki_tool.mcp_registry import create_tool_registry
 
 
 def main(argv: list[str] | None = None) -> int:
+    load_dotenv_if_present(PROJECT_ROOT)
     parser = argparse.ArgumentParser(description="LLM Wiki Tool v2 CLI")
     parser.add_argument("--domain", required=True, help="domain.yml 경로")
     subparsers = parser.add_subparsers(dest="command", required=True)

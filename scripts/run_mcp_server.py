@@ -9,10 +9,12 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from wiki_tool.config import load_domain_config
+from wiki_tool.env_loader import load_dotenv_if_present
 from wiki_tool.mcp_server import create_fastmcp_server
 
 
 def main(argv: list[str] | None = None) -> int:
+    load_dotenv_if_present(PROJECT_ROOT)
     parser = argparse.ArgumentParser(description="LLM Wiki MCP server를 실행합니다.")
     parser.add_argument("--domain", required=True, help="domain.yml 경로")
     parser.add_argument("--transport", default="stdio", choices=["stdio", "sse", "streamable-http"])

@@ -14,6 +14,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from wiki_tool.agent_provider import load_agent_provider_config, resolve_codex_command
 from wiki_tool.config import load_domain_config
+from wiki_tool.env_loader import load_dotenv_if_present
 from wiki_tool.mcp_tools import WikiToolAdapter
 
 
@@ -46,6 +47,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--question", required=True, help="answer smoke question")
     args = parser.parse_args(argv)
 
+    load_environment_for_smoke()
     env_summary = summarize_environment(os.environ)
     print("Environment")
     for line in format_environment_summary(env_summary):
@@ -89,6 +91,10 @@ def main(argv: list[str] | None = None) -> int:
     classification = classify_result(cli_check, answer)
     print_summary(classification, cli_check, answer)
     return classification.exit_code
+
+
+def load_environment_for_smoke(project_root: Path | None = None) -> dict[str, str]:
+    return load_dotenv_if_present(project_root or PROJECT_ROOT)
 
 
 def summarize_environment(env: Mapping[str, str]) -> dict[str, Any]:

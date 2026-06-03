@@ -20,6 +20,8 @@ python scripts/wiki_tool.py --domain examples/finance/domain.yml pipeline
 python scripts/lint_wiki.py --domain examples/finance/domain.yml
 python scripts/run_mcp_server.py --domain examples/finance/domain.yml --transport stdio
 python scripts/run_desktop_gui.py --domain examples/finance/domain.yml
+Copy `.env.example` to `.env` to configure the Codex provider.
+python scripts/smoke_codex_provider.py --domain examples/finance/domain.yml --question "CAPM은 무엇인가?"
 ```
 
 ## 검증

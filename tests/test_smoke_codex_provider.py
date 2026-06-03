@@ -1,8 +1,10 @@
 import importlib.util
+import os
 import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 def load_smoke_module():
@@ -30,6 +32,27 @@ class SmokeCodexProviderTests(unittest.TestCase):
         self.assertIn("resolved answer model: secret-answer-model-with-long-private-suffix", rendered)
         self.assertIn("LLM_WIKI_CODEX_COMMAND: set", rendered)
         self.assertNotIn(r"C:\Tools\codex.cmd --profile private-user", rendered)
+
+    def test_smoke_runner_loads_dotenv_before_environment_summary(self):
+        smoke = load_smoke_module()
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {}, clear=True):
+            root = Path(tmp)
+            (root / ".env").write_text(
+                "\n".join(
+                    [
+                        "LLM_WIKI_AGENT_PROVIDER=codex",
+                        "LLM_WIKI_ANSWER_MODEL=gpt-5.5",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            loaded = smoke.load_environment_for_smoke(root)
+            summary = smoke.summarize_environment(os.environ)
+
+        self.assertEqual(loaded["LLM_WIKI_AGENT_PROVIDER"], "codex")
+        self.assertEqual(summary["provider"], "codex")
+        self.assertEqual(summary["resolved_models"]["answer"], "gpt-5.5")
 
     def test_codex_cli_version_check_success_and_failure_are_structured(self):
         smoke = load_smoke_module()
