@@ -6,6 +6,11 @@ from html.parser import HTMLParser
 from pathlib import Path
 
 
+HTML_SKIP_TAGS = {"script", "style", "nav", "footer", "aside", "header", "form", "button", "select", "option", "noscript"}
+HTML_VOID_TAGS = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "track", "wbr"}
+HTML_NOISE_ATTR_RE = re.compile(r"(nav|menu|footer|header|sidebar|breadcrumb|cookie|share|social|advert|banner|promo|subscribe)", re.I)
+
+
 @dataclass(frozen=True)
 class ExtractedSource:
     title: str
@@ -47,7 +52,7 @@ def _extract_text(path: Path) -> ExtractedSource:
 def _extract_html(path: Path) -> ExtractedSource:
     parser = _ReadableHTMLParser()
     parser.feed(path.read_text(encoding="utf-8", errors="replace"))
-    text = "\n".join(part.strip() for part in parser.parts if part.strip())
+    text = "\n".join(_clean_extracted_lines(parser.parts))
     title = parser.title or path.stem
     return ExtractedSource(title=title, text=text, visual_notes=[], warnings=[], recommended_actions=[])
 
@@ -74,6 +79,7 @@ def _extract_pdf_text_fallback(path: Path) -> ExtractedSource:
     if len(text) < 80:
         warnings.append("PDF 텍스트 추출 결과가 충분하지 않습니다.")
         actions.append("enable_pdf_vision")
+        actions.append("manual_review")
     return ExtractedSource(
         title=path.stem,
         text=text,
@@ -95,7 +101,9 @@ def _extract_pdf_pages(path: Path) -> list[str]:
         for page in reader.pages:
             text = (page.extract_text() or "").strip()
             if text:
-                pages.append(re.sub(r"\s+", " ", text))
+                cleaned = " ".join(_clean_extracted_lines(text.splitlines()))
+                if cleaned:
+                    pages.append(cleaned)
         return pages
     except Exception:
         return []
@@ -114,11 +122,14 @@ class _ReadableHTMLParser(HTMLParser):
         self.parts: list[str] = []
         self.title = ""
         self._skip_depth = 0
+        self._skip_tag_stack: list[str] = []
         self._capture_title = False
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        if tag in {"script", "style", "nav", "footer", "aside"}:
+        should_skip = tag in HTML_SKIP_TAGS or _has_noise_attr(attrs)
+        if should_skip and tag not in HTML_VOID_TAGS:
             self._skip_depth += 1
+            self._skip_tag_stack.append(tag)
         if tag == "title":
             self._capture_title = True
         if tag == "img" and not self._skip_depth:
@@ -128,7 +139,8 @@ class _ReadableHTMLParser(HTMLParser):
                 self.parts.append(alt)
 
     def handle_endtag(self, tag: str) -> None:
-        if tag in {"script", "style", "nav", "footer", "aside"} and self._skip_depth:
+        if self._skip_tag_stack and self._skip_tag_stack[-1] == tag and self._skip_depth:
+            self._skip_tag_stack.pop()
             self._skip_depth -= 1
         if tag == "title":
             self._capture_title = False
@@ -143,3 +155,40 @@ class _ReadableHTMLParser(HTMLParser):
             self.title = text
         else:
             self.parts.append(text)
+
+
+def _has_noise_attr(attrs: list[tuple[str, str | None]]) -> bool:
+    attrs_map = {name.casefold(): (value or "") for name, value in attrs}
+    role = attrs_map.get("role", "").casefold()
+    if role in {"navigation", "banner", "contentinfo", "complementary"}:
+        return True
+    joined = " ".join(attrs_map.get(key, "") for key in ("id", "class", "aria-label"))
+    return bool(HTML_NOISE_ATTR_RE.search(joined))
+
+
+def _clean_extracted_lines(parts: list[str]) -> list[str]:
+    lines: list[str] = []
+    seen: set[str] = set()
+    for part in parts:
+        line = re.sub(r"\s+", " ", part).strip()
+        if not line or _is_extraction_noise_line(line):
+            continue
+        key = line.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        lines.append(line)
+    return lines
+
+
+def _is_extraction_noise_line(line: str) -> bool:
+    lowered = line.casefold()
+    if len(line) <= 2:
+        return True
+    if re.fullmatch(r"(home|menu|login|logout|search|share|subscribe|previous|next|top|메뉴|홈|로그인|검색|공유|이전|다음)", lowered):
+        return True
+    if re.search(r"(copyright|all rights reserved|개인정보처리방침|이용약관|쿠키|cookie)", lowered):
+        return True
+    if re.fullmatch(r"[\W_0-9]+", line):
+        return True
+    return False

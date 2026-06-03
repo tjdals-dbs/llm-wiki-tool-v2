@@ -10,6 +10,15 @@ from .manifest import ManifestEntry, read_manifest, write_manifest
 from .quality import QualityReview, review_source_quality
 
 
+METADATA_LINE_RE = re.compile(r"^(source[_ -]?path|sha256|hash|tool[_ -]?trace|extracted[_ -]?text|raw[_ -]?path|created[_ -]?at|updated[_ -]?at)\s*[:=]", re.I)
+UI_CHROME_RE = re.compile(
+    r"^(home|menu|login|logout|search|share|subscribe|previous|next|top|"
+    r"메뉴|홈|로그인|검색|공유|이전|다음|맨 위|전체 메뉴)$",
+    re.I,
+)
+BOILERPLATE_RE = re.compile(r"(copyright|all rights reserved|개인정보처리방침|이용약관|쿠키|cookie|footer|navigation)", re.I)
+
+
 @dataclass(frozen=True)
 class SourceSummaryResult:
     summarized_count: int
@@ -101,13 +110,14 @@ def _slug(value: str) -> str:
 
 def _candidate_concepts(extracted: ExtractedSource) -> list[str]:
     candidates: list[str] = []
+    readable_text = _readable_text(extracted.text)
     for concept in _title_concepts(extracted.title):
         _append_concept(candidates, concept)
     for concept in _heading_concepts(extracted.text):
         _append_concept(candidates, concept)
-    for token in re.findall(r"\b[A-Z][A-Z0-9]{2,}\b", extracted.text):
+    for token in re.findall(r"\b[A-Z][A-Z0-9]{2,}\b", readable_text):
         _append_concept(candidates, token)
-    for concept in _korean_term_candidates(extracted.text):
+    for concept in _korean_term_candidates(readable_text):
         _append_concept(candidates, concept)
     return candidates[:8]
 
@@ -180,6 +190,14 @@ def _is_generic_concept(value: str) -> bool:
         "개요",
         "요약",
         "소개",
+        "home",
+        "menu",
+        "login",
+        "search",
+        "메뉴",
+        "홈",
+        "로그인",
+        "검색",
     }
 
 
@@ -258,7 +276,10 @@ def _analyze_source(
 
 def _summary(sentences: list[str], quality: QualityReview) -> str:
     if quality.quality == "weak":
-        return "이 source는 자동 개념 승격에 충분하지 않아 검토가 필요합니다."
+        return (
+            "이 source는 자동 개념 승격에 충분하지 않아 검토가 필요합니다. "
+            "텍스트 레이어, OCR/vision 결과, 또는 수동 요약을 보완한 뒤 다시 summarize 하세요."
+        )
     if not sentences:
         return "요약할 본문을 찾지 못했습니다."
     selected = _ranked_sentences(sentences, [])[:2]
@@ -290,6 +311,7 @@ def _sentences(text: str) -> list[str]:
 
 def _readable_text(text: str) -> str:
     lines: list[str] = []
+    seen_lines: set[str] = set()
     in_code_block = False
     in_frontmatter = False
     for raw_line in text.splitlines():
@@ -313,8 +335,31 @@ def _readable_text(text: str) -> str:
         line = re.sub(r"^[-*+]\s+", "", line)
         line = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", line)
         line = re.sub(r"`([^`]+)`", r"\1", line)
+        if _is_noise_line(line):
+            continue
+        line_key = line.casefold()
+        if line_key in seen_lines:
+            continue
+        seen_lines.add(line_key)
         lines.append(line)
     return " ".join(lines)
+
+
+def _is_noise_line(line: str) -> bool:
+    stripped = line.strip()
+    if len(stripped) <= 2:
+        return True
+    if METADATA_LINE_RE.search(stripped):
+        return True
+    if UI_CHROME_RE.search(stripped):
+        return True
+    if BOILERPLATE_RE.search(stripped):
+        return True
+    if re.fullmatch(r"https?://\S+|www\.\S+", stripped, flags=re.I):
+        return True
+    if re.fullmatch(r"[\W_0-9]+", stripped):
+        return True
+    return False
 
 
 def _ranked_sentences(sentences: list[str], candidate_concepts: list[str]) -> list[str]:

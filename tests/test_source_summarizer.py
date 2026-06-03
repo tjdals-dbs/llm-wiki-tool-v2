@@ -75,7 +75,10 @@ class SourceSummarizerTests(unittest.TestCase):
             content = source_page.read_text(encoding="utf-8")
             self.assertIn("quality: weak", content)
             self.assertIn("enable_pdf_vision", content)
+            self.assertIn("manual_review", content)
             self.assertIn("PDF 텍스트 추출 결과가 충분하지 않습니다.", content)
+            self.assertIn("텍스트 레이어", content)
+            self.assertIn("수동 요약", content)
 
             rows = list(csv.DictReader(domain.manifest_path.read_text(encoding="utf-8").splitlines()))
             self.assertEqual(rows[0]["status"], "needs_review")
@@ -147,6 +150,9 @@ class SourceSummarizerTests(unittest.TestCase):
                         "tool_trace: extractor-v1",
                         "---",
                         "# 듀레이션",
+                        "sha256: body-metadata-should-not-appear",
+                        "메뉴",
+                        "듀레이션은 금리 변화에 대한 채권 가격의 민감도를 설명하는 개념이다.",
                         "듀레이션은 금리 변화에 대한 채권 가격의 민감도를 설명하는 개념이다.",
                         "만기가 길고 쿠폰이 낮을수록 듀레이션은 커지는 경향이 있다.",
                     ]
@@ -164,6 +170,8 @@ class SourceSummarizerTests(unittest.TestCase):
             self.assertIn("듀레이션은 금리 변화", reader_body)
             self.assertNotIn("source_path", reader_body)
             self.assertNotIn("tool_trace", reader_body)
+            self.assertNotIn("body-metadata-should-not-appear", reader_body)
+            self.assertNotIn("메뉴", reader_body)
             self.assertLess(content.index("## Summary"), content.index("## Source Metadata"))
 
 

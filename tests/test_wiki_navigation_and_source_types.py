@@ -54,9 +54,14 @@ class WikiNavigationAndSourceTypeTests(unittest.TestCase):
                   <head><title>CAPM 기사</title><style>.x{}</style><script>ignore()</script></head>
                   <body>
                     <nav>메뉴 텍스트</nav>
+                    <header class="site-header">상단 메뉴</header>
+                    <div id="breadcrumb">홈 &gt; 투자</div>
+                    <div class="cookie-banner">쿠키 안내</div>
                     <h1>CAPM 기사</h1>
                     <p>CAPM은 기대수익률과 위험을 설명한다.</p>
+                    <p>CAPM은 기대수익률과 위험을 설명한다.</p>
                     <img src="capm.png" alt="CAPM 그래프 설명">
+                    <div class="share-tools">공유</div>
                     <footer>사이트 푸터</footer>
                   </body>
                 </html>
@@ -71,6 +76,10 @@ class WikiNavigationAndSourceTypeTests(unittest.TestCase):
             self.assertIn("CAPM은 기대수익률과 위험을 설명한다.", content)
             self.assertIn("CAPM 그래프 설명", content)
             self.assertNotIn("메뉴 텍스트", content)
+            self.assertNotIn("상단 메뉴", content)
+            self.assertNotIn("쿠키 안내", content)
+            self.assertNotIn("홈 > 투자", content)
+            self.assertNotIn("공유", content)
             self.assertNotIn("사이트 푸터", content)
             self.assertNotIn("ignore()", content)
 
