@@ -81,6 +81,44 @@ class AnswerAndMcpServerTests(unittest.TestCase):
             self.assertEqual(answer["used_pages"], [])
             self.assertEqual(answer["evidence"], [])
 
+    def test_answer_evidence_filters_operational_metadata(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            domain = load_domain_config(write_domain(root), root=root)
+            concept = root / "wiki" / "concepts" / "capm.md"
+            concept.parent.mkdir(parents=True)
+            concept.write_text(
+                "\n".join(
+                    [
+                        "# CAPM",
+                        "",
+                        "## Definition",
+                        "",
+                        "CAPM은 기대수익률과 체계적 위험을 연결한다.",
+                        "",
+                        "## Source Evidence",
+                        "",
+                        "- [capm](../sources/capm.md)",
+                        "- Raw path: private/capm.pdf",
+                        "- SHA256: abc123",
+                        "- tool_trace: extractor-v1",
+                        "- CAPM은 베타와 시장 위험 프리미엄을 사용한다.",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            adapter = WikiToolAdapter(domain)
+
+            answer = adapter.answer_question("CAPM")
+
+            self.assertEqual(answer["status"], "ok")
+            self.assertLessEqual(len(answer["evidence"]), 3)
+            evidence_text = " ".join(item["text"] for item in answer["evidence"])
+            self.assertIn("CAPM은", evidence_text)
+            self.assertNotIn("Raw path", evidence_text)
+            self.assertNotIn("SHA256", evidence_text)
+            self.assertNotIn("tool_trace", evidence_text)
+
     def test_register_mcp_tools_exposes_adapter_methods_on_server(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

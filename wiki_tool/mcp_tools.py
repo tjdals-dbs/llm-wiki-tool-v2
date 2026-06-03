@@ -121,7 +121,7 @@ class WikiToolAdapter:
                         "text": evidence_text,
                     }
                 )
-        return _dedupe_evidence(collected)[:5]
+        return _dedupe_evidence(collected)[:3]
 
     def scan_raw_sources(self) -> dict[str, Any]:
         result = core_scan_raw_sources(self.config)
@@ -226,9 +226,9 @@ def _section_values(content: str, heading: str) -> list[str]:
     for line in _section_lines(content, heading):
         if line.startswith("- "):
             value = line[2:].strip()
-            if value != "없음" and not value.startswith("["):
+            if value != "없음" and not value.startswith("[") and not _is_operational_evidence(value):
                 values.append(value)
-        elif line.strip() and not line.startswith("## "):
+        elif line.strip() and not line.startswith("## ") and not _is_operational_evidence(line):
             values.append(line.strip())
     return values
 
@@ -257,6 +257,30 @@ def _evidence_score(value: str, query_terms: list[str]) -> int:
     if len(value) >= 12:
         score += 1
     return score
+
+
+def _is_operational_evidence(value: str) -> bool:
+    normalized = value.strip().casefold()
+    if not normalized or normalized in {"---", "```"}:
+        return True
+    operational_prefixes = (
+        "raw path:",
+        "sha256:",
+        "source type:",
+        "ingest status:",
+        "quality:",
+        "warnings:",
+        "recommended_actions:",
+        "concept_count:",
+        "concept_evidence_count:",
+        "substantive_content_count:",
+        "visual_summary_count:",
+        "source_path:",
+        "tool_trace:",
+    )
+    if normalized.startswith(operational_prefixes):
+        return True
+    return "raw extraction" in normalized or "extracted text" in normalized
 
 
 def _clean_evidence(value: str) -> str:
