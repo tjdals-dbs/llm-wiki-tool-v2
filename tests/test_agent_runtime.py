@@ -1,3 +1,4 @@
+import os
 import subprocess
 import sys
 import tempfile
@@ -29,7 +30,46 @@ def write_domain(root: Path) -> Path:
     return domain_file
 
 
+AGENT_MODEL_ENV_NAMES = [
+    "LLM_WIKI_AGENT_MODEL",
+    "LLM_WIKI_ANSWER_MODEL",
+    "LLM_WIKI_INGEST_MODEL",
+    "LLM_WIKI_CONCEPT_MODEL",
+    "LLM_WIKI_REVIEW_MODEL",
+]
+
+
+def _runtime_subprocess_env() -> dict[str, str]:
+    env = os.environ.copy()
+    env["LLM_WIKI_AGENT_PROVIDER"] = "rule_based"
+    for name in AGENT_MODEL_ENV_NAMES:
+        env[name] = ""
+    env["LLM_WIKI_CODEX_COMMAND"] = ""
+    return env
+
+
 class AgentRuntimeTests(unittest.TestCase):
+    def test_runtime_subprocess_env_forces_rule_based_provider(self):
+        with patch.dict(
+            os.environ,
+            {
+                "LLM_WIKI_AGENT_PROVIDER": "codex",
+                "LLM_WIKI_AGENT_MODEL": "gpt-5.5",
+                "LLM_WIKI_ANSWER_MODEL": "gpt-5.5",
+                "LLM_WIKI_INGEST_MODEL": "gpt-5.5",
+                "LLM_WIKI_CONCEPT_MODEL": "gpt-5.5",
+                "LLM_WIKI_REVIEW_MODEL": "gpt-5.5",
+                "LLM_WIKI_CODEX_COMMAND": "codex.cmd",
+            },
+            clear=True,
+        ):
+            env = _runtime_subprocess_env()
+
+        self.assertEqual(env["LLM_WIKI_AGENT_PROVIDER"], "rule_based")
+        for name in AGENT_MODEL_ENV_NAMES:
+            self.assertEqual(env[name], "")
+        self.assertEqual(env["LLM_WIKI_CODEX_COMMAND"], "")
+
     def test_run_maintenance_once_processes_raw_change_to_concept(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -38,7 +78,8 @@ class AgentRuntimeTests(unittest.TestCase):
             raw_file.parent.mkdir()
             raw_file.write_text("# CAPM\nCAPM은 기대수익률과 위험을 연결한다.", encoding="utf-8")
 
-            result = run_maintenance_once(domain)
+            with patch.dict(os.environ, _runtime_subprocess_env()):
+                result = run_maintenance_once(domain)
 
             self.assertTrue(result["lint"]["ok"])
             self.assertEqual(result["scan"]["new_count"], 1)
@@ -151,6 +192,7 @@ class AgentRuntimeTests(unittest.TestCase):
                 text=True,
                 capture_output=True,
                 check=False,
+                env=_runtime_subprocess_env(),
             )
 
             self.assertEqual(result.returncode, 0, result.stderr)
