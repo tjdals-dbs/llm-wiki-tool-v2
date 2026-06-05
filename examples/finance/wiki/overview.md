@@ -5,5 +5,5 @@
 - domain: Finance Investment Theory
 - language: ko
 - source pages: 1
-- concept pages: 1
+- concept pages: 2
 - answer pages: 0

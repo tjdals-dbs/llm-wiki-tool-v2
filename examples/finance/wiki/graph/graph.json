@@ -4,18 +4,44 @@
       "id": "wiki/concepts/capm.md",
       "path": "wiki/concepts/capm.md",
       "label": "CAPM",
-      "type": "concept"
+      "tooltip": "CAPM",
+      "type": "concept",
+      "style": {
+        "color": "#76d6a3",
+        "shape": "circle"
+      }
+    },
+    {
+      "id": "wiki/concepts/베타.md",
+      "path": "wiki/concepts/베타.md",
+      "label": "베타",
+      "tooltip": "베타",
+      "type": "concept",
+      "style": {
+        "color": "#76d6a3",
+        "shape": "circle"
+      }
     },
     {
       "id": "wiki/sources/capm.md",
       "path": "wiki/sources/capm.md",
       "label": "CAPM",
-      "type": "source"
+      "tooltip": "CAPM",
+      "type": "source",
+      "style": {
+        "color": "#9fbfff",
+        "shape": "square"
+      }
     }
   ],
   "edges": [
     {
       "from": "wiki/concepts/capm.md",
+      "to": "wiki/sources/capm.md",
+      "type": "derived_from"
+    },
+    {
+      "from": "wiki/concepts/베타.md",
       "to": "wiki/sources/capm.md",
       "type": "derived_from"
     }
