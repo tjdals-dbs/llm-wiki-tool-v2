@@ -7,6 +7,7 @@ from pathlib import Path
 from .config import DomainConfig
 from .agent_hooks import AgentHookResult, draft_source_summary_with_agent
 from .agent_provider import PROVIDER_CODEX, resolve_agent_provider
+from .concept_filter import clean_candidate_concept, filter_candidate_concepts, is_valid_candidate_concept
 from .extractors import ExtractedSource, extract_source
 from .manifest import ManifestEntry, read_manifest, write_manifest
 from .quality import QualityReview, review_source_quality
@@ -77,8 +78,9 @@ def summarize_new_sources(config: DomainConfig, limit: int | None = None) -> Sou
             hook_result = draft_source_summary_with_agent(extracted.text)
             validation = validate_source_page_draft(hook_result.draft)
             if hook_result.provider == "codex" and not hook_result.fallback and validation["ok"]:
+                draft = _sanitize_candidate_concept_sections(hook_result.draft)
                 source_content = _with_source_pipeline_metadata(
-                    hook_result.draft,
+                    draft,
                     entry,
                     provider="codex",
                     codex_status=hook_result.status,
@@ -161,8 +163,8 @@ def _candidate_concepts(extracted: ExtractedSource) -> list[str]:
 
 
 def _title_concepts(title: str) -> list[str]:
-    cleaned = title.strip()
-    if not cleaned or _is_generic_concept(cleaned):
+    cleaned = clean_candidate_concept(title)
+    if not cleaned:
         return []
     concepts = [cleaned]
     acronym_match = re.search(r"\b[A-Z][A-Z0-9]{2,}\b", cleaned)
@@ -178,8 +180,9 @@ def _heading_concepts(text: str) -> list[str]:
         if not match:
             continue
         heading = match.group(1).strip()
-        if 2 <= len(heading) <= 48 and not _is_generic_concept(heading):
-            concepts.append(heading)
+        cleaned = clean_candidate_concept(heading)
+        if cleaned:
+            concepts.append(cleaned)
     return concepts
 
 
@@ -192,15 +195,15 @@ def _korean_term_candidates(text: str) -> list[str]:
     ]
     for pattern in patterns:
         for match in re.finditer(pattern, readable):
-            concept = _clean_concept(match.group(1))
-            if concept and not _is_generic_concept(concept):
+            concept = clean_candidate_concept(match.group(1))
+            if concept:
                 concepts.append(concept)
     return concepts
 
 
 def _append_concept(candidates: list[str], concept: str) -> None:
-    cleaned = _clean_concept(concept)
-    if not cleaned or _is_generic_concept(cleaned):
+    cleaned = clean_candidate_concept(concept)
+    if not cleaned:
         return
     normalized = cleaned.casefold()
     if all(item.casefold() != normalized for item in candidates):
@@ -208,35 +211,11 @@ def _append_concept(candidates: list[str], concept: str) -> None:
 
 
 def _clean_concept(value: str) -> str:
-    cleaned = re.sub(r"\s+", " ", value).strip(" -:：.,")
-    if len(cleaned) < 2 or len(cleaned) > 60:
-        return ""
-    if re.search(r"[.!?。]", cleaned):
-        return ""
-    return cleaned
+    return clean_candidate_concept(value)
 
 
 def _is_generic_concept(value: str) -> bool:
-    return value.strip().casefold() in {
-        "source",
-        "untitled",
-        "note",
-        "notes",
-        "memo",
-        "문서",
-        "일반 메모",
-        "개요",
-        "요약",
-        "소개",
-        "home",
-        "menu",
-        "login",
-        "search",
-        "메뉴",
-        "홈",
-        "로그인",
-        "검색",
-    }
+    return not is_valid_candidate_concept(value)
 
 
 def _render_source_page(
@@ -305,6 +284,85 @@ def validate_source_page_draft(draft: str) -> dict[str, str | bool]:
     if missing:
         return {"ok": False, "reason": "missing_sections:" + ",".join(missing)}
     return {"ok": True, "reason": ""}
+
+
+def _sanitize_candidate_concept_sections(content: str) -> str:
+    candidates = filter_candidate_concepts(_section_bullets(content, "Candidate Concepts"))
+    sanitized = _replace_bullet_section(content, "Candidate Concepts", candidates)
+    if "## Candidate Concept Evidence" in sanitized:
+        evidence = _filtered_concept_evidence_lines(
+            _section_bullets(sanitized, "Candidate Concept Evidence"),
+            candidates,
+        )
+        sanitized = _replace_bullet_section(sanitized, "Candidate Concept Evidence", evidence)
+    return sanitized
+
+
+def _filtered_concept_evidence_lines(lines: list[str], candidates: list[str]) -> list[str]:
+    allowed = {candidate.casefold(): candidate for candidate in candidates}
+    filtered: list[str] = []
+    seen: set[str] = set()
+    for line in lines:
+        if ":" not in line:
+            continue
+        raw_concept, raw_evidence = line.split(":", 1)
+        concept = clean_candidate_concept(raw_concept)
+        evidence = raw_evidence.strip()
+        if not concept or not evidence:
+            continue
+        canonical = allowed.get(concept.casefold())
+        if not canonical:
+            continue
+        key = canonical.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        filtered.append(f"{canonical}: {evidence}")
+    return filtered
+
+
+def _section_bullets(content: str, heading: str) -> list[str]:
+    items: list[str] = []
+    for line in _section_lines(content, heading):
+        if line.startswith("- "):
+            value = line[2:].strip()
+            if value and value != "없음":
+                items.append(value)
+    return items
+
+
+def _section_lines(content: str, heading: str) -> list[str]:
+    lines = content.splitlines()
+    marker = f"## {heading}"
+    collected: list[str] = []
+    in_section = False
+    for line in lines:
+        if line.strip() == marker:
+            in_section = True
+            continue
+        if in_section and line.startswith("## "):
+            break
+        if in_section and line.strip():
+            collected.append(line.strip())
+    return collected
+
+
+def _replace_bullet_section(content: str, heading: str, items: list[str]) -> str:
+    lines = content.splitlines()
+    marker = f"## {heading}"
+    try:
+        start = next(index for index, line in enumerate(lines) if line.strip() == marker)
+    except StopIteration:
+        return content
+
+    end = len(lines)
+    for index in range(start + 1, len(lines)):
+        if lines[index].startswith("## "):
+            end = index
+            break
+
+    section = [marker, "", _bullet_list(items)]
+    return "\n".join(lines[:start] + section + [""] + lines[end:]).rstrip() + "\n"
 
 
 def _with_source_pipeline_metadata(

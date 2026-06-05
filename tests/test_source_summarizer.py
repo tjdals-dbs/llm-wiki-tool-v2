@@ -29,6 +29,22 @@ def write_domain(root: Path) -> Path:
     return domain_file
 
 
+def section_bullets(content: str, heading: str) -> list[str]:
+    marker = f"## {heading}"
+    lines = content.splitlines()
+    in_section = False
+    bullets: list[str] = []
+    for line in lines:
+        if line.strip() == marker:
+            in_section = True
+            continue
+        if in_section and line.startswith("## "):
+            break
+        if in_section and line.startswith("- "):
+            bullets.append(line[2:].strip())
+    return bullets
+
+
 class SourceSummarizerTests(unittest.TestCase):
     def test_markdown_source_becomes_korean_source_summary_page(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -114,6 +130,73 @@ class SourceSummarizerTests(unittest.TestCase):
             self.assertIn("- provider: codex", content)
             self.assertIn("- fallback: false", content)
             hook.assert_called_once()
+
+    def test_codex_ingest_candidate_concepts_are_filtered_before_write(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            domain = load_domain_config(write_domain(root), root=root)
+            raw_file = root / "raw" / "mixed.md"
+            raw_file.parent.mkdir()
+            raw_file.write_text(
+                "# Mixed\nCAPM과 JWT를 함께 설명하는 공개 테스트 메모입니다.",
+                encoding="utf-8",
+            )
+            scan_raw_sources(domain)
+            codex_draft = "\n".join(
+                [
+                    "# Mixed Source",
+                    "",
+                    "## Summary",
+                    "",
+                    "CAPM과 JWT를 함께 설명하는 요약입니다.",
+                    "",
+                    "## Key Points",
+                    "",
+                    "- CAPM은 기대수익률과 체계적 위험의 관계를 설명한다.",
+                    "- JWT는 인증 토큰 형식이다.",
+                    "",
+                    "## Evidence",
+                    "",
+                    "- CAPM은 기대수익률과 체계적 위험의 관계를 설명한다.",
+                    "- JWT는 인증 토큰 형식이다.",
+                    "",
+                    "## Candidate Concepts",
+                    "",
+                    "- CAPM",
+                    "- JWT",
+                    "- CAPM은 기대수익률과 체계적 위험의 관계를 설명하",
+                    "- 이 문서는 투자 조언이 아닙니다",
+                    "- raw source는 concept page가 되면 안 된다",
+                    "",
+                    "## Candidate Concept Evidence",
+                    "",
+                    "- CAPM: CAPM은 기대수익률과 체계적 위험의 관계를 설명한다.",
+                    "- JWT: JWT는 인증 토큰 형식이다.",
+                    "- CAPM은 기대수익률과 체계적 위험의 관계를 설명하: 문장 조각 근거",
+                ]
+            )
+
+            with patch.dict("os.environ", {"LLM_WIKI_AGENT_PROVIDER": "codex"}, clear=True), patch(
+                "wiki_tool.summarizer.draft_source_summary_with_agent"
+            ) as hook:
+                hook.return_value = AgentHookResult(
+                    role="ingest",
+                    provider="codex",
+                    fallback=False,
+                    status="ok",
+                    draft=codex_draft,
+                )
+                result = summarize_new_sources(domain)
+
+            content = (root / "wiki" / "sources" / "mixed.md").read_text(encoding="utf-8")
+            candidates = section_bullets(content, "Candidate Concepts")
+            concept_evidence = section_bullets(content, "Candidate Concept Evidence")
+            self.assertEqual(result.codex_used_count, 1)
+            self.assertEqual(candidates, ["CAPM", "JWT"])
+            self.assertNotIn("CAPM은 기대수익률과 체계적 위험의 관계를 설명하", "\n".join(candidates))
+            self.assertNotIn("이 문서는 투자 조언이 아닙니다", "\n".join(candidates))
+            self.assertNotIn("raw source는 concept page가 되면 안 된다", "\n".join(candidates))
+            self.assertTrue(all(not item.startswith("CAPM은 기대수익률") for item in concept_evidence))
 
     def test_codex_ingest_draft_missing_required_sections_falls_back(self):
         with tempfile.TemporaryDirectory() as tmp:

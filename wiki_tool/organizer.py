@@ -7,6 +7,7 @@ from urllib.parse import unquote
 
 from .agent_hooks import AgentHookResult, draft_concept_update_with_agent
 from .agent_provider import PROVIDER_CODEX, resolve_agent_provider
+from .concept_filter import clean_candidate_concept, filter_candidate_concepts, is_valid_candidate_concept
 from .config import DomainConfig
 from .manifest import ManifestEntry, read_manifest, write_manifest
 
@@ -44,7 +45,7 @@ def organize_pending_sources(config: DomainConfig, limit: int | None = None) -> 
         source_page = _safe_wiki_path(config, entry.source_page)
         source_page_content = source_page.read_text(encoding="utf-8")
         source = _parse_source_summary(source_page)
-        candidate_concepts = [concept for concept in source.candidate_concepts if not _is_generic_concept(concept)]
+        candidate_concepts = filter_candidate_concepts(source.candidate_concepts)
         if source.quality != "usable" or not candidate_concepts:
             dropped_count += 1
             continue
@@ -154,13 +155,18 @@ class ParsedSourceSummary:
 
 def _parse_source_summary(path: Path) -> ParsedSourceSummary:
     content = path.read_text(encoding="utf-8")
+    candidate_concepts = filter_candidate_concepts(_section_bullets(content, "Candidate Concepts"))
+    candidate_concept_evidence = _filtered_candidate_concept_evidence(
+        _section_concept_evidence(content, "Candidate Concept Evidence"),
+        candidate_concepts,
+    )
     return ParsedSourceSummary(
         title=_title(content),
         summary=_section_text(content, "Summary"),
         key_points=_section_bullets(content, "Key Points"),
         evidence=_section_bullets(content, "Evidence"),
-        candidate_concepts=_section_bullets(content, "Candidate Concepts"),
-        candidate_concept_evidence=_section_concept_evidence(content, "Candidate Concept Evidence"),
+        candidate_concepts=candidate_concepts,
+        candidate_concept_evidence=candidate_concept_evidence,
         quality=_quality(content),
     )
 
@@ -363,6 +369,22 @@ def _section_concept_evidence(content: str, heading: str) -> dict[str, list[str]
     return evidence
 
 
+def _filtered_candidate_concept_evidence(
+    evidence: dict[str, list[str]],
+    candidate_concepts: list[str],
+) -> dict[str, list[str]]:
+    allowed = {candidate.casefold(): candidate for candidate in candidate_concepts}
+    filtered: dict[str, list[str]] = {}
+    for raw_concept, items in evidence.items():
+        concept = clean_candidate_concept(raw_concept)
+        canonical = allowed.get(concept.casefold()) if concept else None
+        if not canonical:
+            continue
+        filtered.setdefault(canonical, [])
+        filtered[canonical].extend(items)
+    return {concept: _dedupe(items) for concept, items in filtered.items()}
+
+
 def _section_lines(content: str, heading: str) -> list[str]:
     lines = content.splitlines()
     marker = f"## {heading}"
@@ -462,8 +484,8 @@ def _related_concepts(name: str, candidate_concepts: list[str]) -> list[str]:
     normalized_name = name.casefold()
     return [
         concept
-        for concept in candidate_concepts
-        if concept.casefold() != normalized_name and not _is_generic_concept(concept)
+        for concept in filter_candidate_concepts(candidate_concepts)
+        if concept.casefold() != normalized_name
     ][:6]
 
 
@@ -575,18 +597,4 @@ def _concept_aliases(value: str) -> set[str]:
 
 
 def _is_generic_concept(value: str) -> bool:
-    normalized = value.strip().lower()
-    return normalized in {
-        "note",
-        "notes",
-        "memo",
-        "메모",
-        "일반 메모",
-        "untitled",
-        "source",
-        "document",
-        "문서",
-        "이 문서",
-        "이 자료",
-        "자료",
-    }
+    return not is_valid_candidate_concept(value)

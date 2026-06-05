@@ -590,6 +590,81 @@ class ConceptGraphLintTests(unittest.TestCase):
             self.assertEqual(result.promoted_count, 0)
             self.assertEqual(result.skipped_count, 1)
 
+    def test_sentence_fragment_candidate_concepts_are_not_promoted_or_graphed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            domain = load_domain_config(write_domain(root), root=root)
+            source_page = root / "wiki" / "sources" / "mixed.md"
+            source_page.parent.mkdir(parents=True)
+            source_page.write_text(
+                "\n".join(
+                    [
+                        "# Mixed Source",
+                        "",
+                        "## Summary",
+                        "CAPM, JWT, Spring Security를 설명하는 공개 테스트 source입니다.",
+                        "",
+                        "## Key Points",
+                        "- CAPM은 기대수익률과 체계적 위험의 관계를 설명한다.",
+                        "- JWT는 인증 토큰 형식이다.",
+                        "- Spring Security는 인증과 인가를 지원한다.",
+                        "",
+                        "## Evidence",
+                        "- CAPM은 기대수익률과 체계적 위험의 관계를 설명한다.",
+                        "- JWT는 인증 토큰 형식이다.",
+                        "- Spring Security는 인증과 인가를 지원한다.",
+                        "",
+                        "## Candidate Concepts",
+                        "- CAPM",
+                        "- JWT",
+                        "- Spring Security",
+                        "- CAPM은 기대수익률과 체계적 위험의 관계를 설명하",
+                        "- 이 문서는 투자 조언이 아닙니다",
+                        "- raw source는 concept page가 되면 안 된다",
+                        "",
+                        "## Candidate Concept Evidence",
+                        "- CAPM: CAPM은 기대수익률과 체계적 위험의 관계를 설명한다.",
+                        "- JWT: JWT는 인증 토큰 형식이다.",
+                        "- Spring Security: Spring Security는 인증과 인가를 지원한다.",
+                        "- CAPM은 기대수익률과 체계적 위험의 관계를 설명하: 문장 조각 근거",
+                        "",
+                        "## Maintenance Notes",
+                        "- quality: usable",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            write_manifest(
+                domain.manifest_path,
+                {
+                    "mixed.md": ManifestEntry(
+                        path="mixed.md",
+                        sha256="safe-test-hash",
+                        source_type="markdown",
+                        status="summarized",
+                        detected_at="2026-06-05T00:00:00+00:00",
+                        source_page="wiki/sources/mixed.md",
+                    )
+                },
+            )
+
+            result = organize_pending_sources(domain)
+
+            self.assertEqual(result.promoted_count, 3)
+            self.assertTrue((root / "wiki" / "concepts" / "capm.md").exists())
+            self.assertTrue((root / "wiki" / "concepts" / "jwt.md").exists())
+            self.assertTrue((root / "wiki" / "concepts" / "spring-security.md").exists())
+            all_concept_titles = "\n".join(path.read_text(encoding="utf-8").splitlines()[0] for path in (root / "wiki" / "concepts").glob("*.md"))
+            self.assertNotIn("CAPM은 기대수익률과 체계적 위험의 관계를 설명하", all_concept_titles)
+            self.assertNotIn("이 문서는 투자 조언이 아닙니다", all_concept_titles)
+            self.assertNotIn("raw source는 concept page가 되면 안 된다", all_concept_titles)
+
+            graph = build_wiki_graph(domain)
+            graph_titles = "\n".join(node["tooltip"] for node in graph["nodes"])
+            self.assertNotIn("CAPM은 기대수익률과 체계적 위험의 관계를 설명하", graph_titles)
+            self.assertNotIn("이 문서는 투자 조언이 아닙니다", graph_titles)
+            self.assertNotIn("raw source는 concept page가 되면 안 된다", graph_titles)
+
     def test_lint_reports_concept_without_source_evidence(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
