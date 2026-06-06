@@ -62,6 +62,16 @@ class GuiTaskResult:
     error: str | None = None
 
 
+@dataclass(frozen=True)
+class GuiTaskSpec:
+    key: str
+    kind: str
+    label: str
+    pending_message: str
+    task: Callable[[], str]
+    refresh_pages: bool
+
+
 class DirectAdapterAgentFallback:
     def __init__(self, adapter: Any) -> None:
         self.adapter = adapter
@@ -242,6 +252,59 @@ def build_agent_pending_message() -> str:
 
 def build_maintenance_pending_message() -> str:
     return "maintenance 실행 중...\nraw scan, source summary, concept organize, lint를 순서대로 실행합니다."
+
+
+def build_maintenance_task_specs(presenter: Any) -> dict[str, GuiTaskSpec]:
+    return {
+        "scan": GuiTaskSpec(
+            key="scan",
+            kind="maintenance",
+            label="raw 스캔",
+            pending_message="raw 스캔 실행 중...",
+            task=presenter.scan_raw_sources,
+            refresh_pages=True,
+        ),
+        "summarize": GuiTaskSpec(
+            key="summarize",
+            kind="maintenance",
+            label="새 source 요약",
+            pending_message="새 source 요약 실행 중...",
+            task=presenter.summarize_new_sources,
+            refresh_pages=True,
+        ),
+        "organize": GuiTaskSpec(
+            key="organize",
+            kind="maintenance",
+            label="pending concept 조직",
+            pending_message="pending concept 조직 실행 중... concept 후보가 많으면 오래 걸릴 수 있습니다.",
+            task=presenter.organize_pending_sources,
+            refresh_pages=True,
+        ),
+        "lint": GuiTaskSpec(
+            key="lint",
+            kind="maintenance",
+            label="wiki lint",
+            pending_message="wiki lint 실행 중...",
+            task=presenter.run_wiki_lint,
+            refresh_pages=False,
+        ),
+        "maintenance": GuiTaskSpec(
+            key="maintenance",
+            kind="maintenance",
+            label="maintenance 실행",
+            pending_message=build_maintenance_pending_message(),
+            task=presenter.run_maintenance_workflow,
+            refresh_pages=True,
+        ),
+        "status": GuiTaskSpec(
+            key="status",
+            kind="maintenance",
+            label="상태 새로고침",
+            pending_message="상태 새로고침 실행 중...",
+            task=presenter.wiki_status,
+            refresh_pages=False,
+        ),
+    }
 
 
 def worker_success_result(kind: str, message: str, *, refresh_pages: bool) -> GuiTaskResult:
@@ -434,6 +497,7 @@ def _create_desktop_window(config: DomainConfig, deps: dict[str, Any]) -> Any:
                 self.adapter,
                 agent_route=McpCodexAgentRoute(domain_config, fallback=DirectAdapterAgentFallback(self.adapter)),
             )
+            self._maintenance_task_specs = build_maintenance_task_specs(self.presenter)
             self._pages: list[dict[str, Any]] = []
             self._selected_path: str | None = None
             self._valid_paths: set[str] = set()
@@ -628,35 +692,36 @@ def _create_desktop_window(config: DomainConfig, deps: dict[str, Any]) -> Any:
                 QDesktopServices.openUrl(QUrl(href))
 
         def _scan(self) -> None:
-            self._set_agent_output(self.presenter.scan_raw_sources())
-            self.refresh_pages()
+            self._run_maintenance_task("scan")
 
         def _summarize(self) -> None:
-            self._set_agent_output(self.presenter.summarize_new_sources())
-            self.refresh_pages()
+            self._run_maintenance_task("summarize")
 
         def _organize(self) -> None:
-            self._set_agent_output(self.presenter.organize_pending_sources())
-            self.refresh_pages()
+            self._run_maintenance_task("organize")
 
         def _lint(self) -> None:
-            self._set_agent_output(self.presenter.run_wiki_lint())
+            self._run_maintenance_task("lint")
 
         def _maintenance(self) -> None:
-            if self._maintenance_running:
-                return
-            self._maintenance_running = True
-            self._set_maintenance_enabled(False)
-            self._set_agent_output(build_maintenance_pending_message())
-            self._start_background_task(
-                kind="maintenance",
-                label="maintenance 실행",
-                task=self.presenter.run_maintenance_workflow,
-                refresh_pages=True,
-            )
+            self._run_maintenance_task("maintenance")
 
         def _status(self) -> None:
-            self._set_agent_output(self.presenter.wiki_status())
+            self._run_maintenance_task("status")
+
+        def _run_maintenance_task(self, key: str) -> None:
+            if self._maintenance_running:
+                return
+            spec = self._maintenance_task_specs[key]
+            self._maintenance_running = True
+            self._set_maintenance_enabled(False)
+            self._set_agent_output(spec.pending_message)
+            self._start_background_task(
+                kind=spec.kind,
+                label=spec.label,
+                task=spec.task,
+                refresh_pages=spec.refresh_pages,
+            )
 
         def _ask(self) -> None:
             if self._agent_running:

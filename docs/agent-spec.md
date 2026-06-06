@@ -186,7 +186,7 @@ Desktop GUI route:
 - raw scan, summarize, organize, graph, lint 결과를 검토합니다.
 - Codex provider가 pipeline에서 사용된 경우 짧은 review를 남길 수 있습니다.
 - GUI와 runtime에 maintenance run 결과를 요약합니다.
-- PySide6 GUI의 전체 maintenance 실행은 background worker에서 실행하고, 완료 후 report와 page list를 갱신합니다.
+- PySide6 GUI의 maintenance 계열 작업은 background worker에서 실행하고, 완료 후 결과와 필요한 page list를 갱신합니다.
 
 읽기 가능:
 

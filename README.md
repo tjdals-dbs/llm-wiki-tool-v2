@@ -65,7 +65,7 @@ desktop GUI 실행:
 python scripts\run_desktop_gui.py --domain examples\finance\domain.yml
 ```
 
-오른쪽 Wiki Agent 패널은 MCP tool registry를 우선 사용하며, GUI에는 `agent route: mcp/codex`, `agent route: mcp/rule_based`, `agent route: direct fallback`처럼 현재 답변 경로가 표시됩니다. 에이전트 질문과 전체 maintenance 실행은 background worker에서 처리되어 긴 작업 중에도 창이 멈추지 않도록 합니다.
+오른쪽 Wiki Agent 패널은 MCP tool registry를 우선 사용하며, GUI에는 `agent route: mcp/codex`, `agent route: mcp/rule_based`, `agent route: direct fallback`처럼 현재 답변 경로가 표시됩니다. 에이전트 질문과 maintenance 계열 작업은 background worker에서 처리되어 긴 작업 중에도 창이 멈추지 않도록 합니다.
 
 Codex provider answer smoke 확인:
 

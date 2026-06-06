@@ -11,11 +11,13 @@ from wiki_tool.desktop_gui import (
     AgentRouteResult,
     DesktopGuiPresenter,
     DirectAdapterAgentFallback,
+    GuiTaskSpec,
     GuiTaskResult,
     McpCodexAgentRoute,
     _agent_route_line,
     build_agent_pending_message,
     build_maintenance_pending_message,
+    build_maintenance_task_specs,
     worker_failure_result,
     worker_success_result,
     _graph_item_label,
@@ -144,6 +146,35 @@ class FakeRoute:
         )
 
 
+class FakePresenter:
+    def __init__(self):
+        self.calls = []
+
+    def scan_raw_sources(self):
+        self.calls.append("scan")
+        return "raw 스캔 완료"
+
+    def summarize_new_sources(self):
+        self.calls.append("summarize")
+        return "source 요약 완료"
+
+    def organize_pending_sources(self):
+        self.calls.append("organize")
+        return "concept 조직 완료"
+
+    def run_wiki_lint(self):
+        self.calls.append("lint")
+        return "wiki lint 통과"
+
+    def run_maintenance_workflow(self):
+        self.calls.append("maintenance")
+        return "Maintenance Run Report\n상태: 성공"
+
+    def wiki_status(self):
+        self.calls.append("status")
+        return "pending source: 0"
+
+
 class DesktopGuiTests(unittest.TestCase):
     def test_korean_three_panel_labels_do_not_offer_upload_ux(self):
         labels = " ".join(GUI_PANEL_TITLES + GUI_ACTION_LABELS)
@@ -250,6 +281,39 @@ class DesktopGuiTests(unittest.TestCase):
 
     def test_maintenance_pending_message_is_immediate(self):
         self.assertIn("maintenance 실행 중", build_maintenance_pending_message())
+
+    def test_maintenance_task_specs_are_lazy_and_background_safe(self):
+        presenter = FakePresenter()
+
+        specs = build_maintenance_task_specs(presenter)
+        organize = specs["organize"]
+
+        self.assertIsInstance(organize, GuiTaskSpec)
+        self.assertEqual(presenter.calls, [])
+        self.assertIn("pending concept 조직 실행 중", organize.pending_message)
+        self.assertIn("오래 걸릴 수 있습니다", organize.pending_message)
+        self.assertTrue(organize.refresh_pages)
+        self.assertEqual(organize.task(), "concept 조직 완료")
+        self.assertEqual(presenter.calls, ["organize"])
+
+    def test_maintenance_task_specs_mark_refresh_requirements(self):
+        specs = build_maintenance_task_specs(FakePresenter())
+
+        self.assertTrue(specs["scan"].refresh_pages)
+        self.assertTrue(specs["summarize"].refresh_pages)
+        self.assertTrue(specs["organize"].refresh_pages)
+        self.assertTrue(specs["maintenance"].refresh_pages)
+        self.assertFalse(specs["lint"].refresh_pages)
+        self.assertFalse(specs["status"].refresh_pages)
+
+    def test_all_maintenance_task_specs_return_user_visible_messages(self):
+        presenter = FakePresenter()
+
+        specs = build_maintenance_task_specs(presenter)
+        messages = [specs[key].task() for key in ["scan", "summarize", "organize", "lint", "status"]]
+
+        self.assertEqual(presenter.calls, ["scan", "summarize", "organize", "lint", "status"])
+        self.assertTrue(all(message for message in messages))
 
     def test_presenter_reports_pending_sources_and_source_quality(self):
         adapter = FakeAdapter()
