@@ -172,6 +172,12 @@ Codex provider:
 - Codex answer가 valid하고 evidence가 있으면 사용합니다.
 - Codex 실패, timeout, invalid answer, evidence 부족은 rule-based fallback으로 처리합니다.
 
+Desktop GUI route:
+
+- PySide6 desktop GUI의 Wiki Agent 패널은 MCP tool registry의 `answer_question`을 우선 호출합니다.
+- GUI에는 `agent route: mcp/codex`, `agent route: mcp/rule_based`, `agent route: direct fallback` 형태로 실제 답변 경로를 표시합니다.
+- MCP route가 실패한 경우에만 direct `WikiToolAdapter.answer_question()` fallback을 사용합니다.
+
 ## Maintenance/Review Agent
 
 역할:

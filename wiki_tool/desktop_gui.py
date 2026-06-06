@@ -2,20 +2,26 @@ from __future__ import annotations
 
 import hashlib
 import math
-from pathlib import Path
-from typing import Any
+import posixpath
+from dataclasses import dataclass
+from html import escape
+from pathlib import Path, PurePosixPath
+from typing import Any, Callable
+from urllib.parse import unquote, urlparse
 
+from .agent_provider import PROVIDER_CODEX, load_agent_provider_config
 from .config import DomainConfig
+from .mcp_registry import create_tool_registry
 from .mcp_tools import WikiToolAdapter
 
 
-GUI_PANEL_TITLES = ["위키 페이지", "선택한 페이지", "에이전트 제어"]
+GUI_PANEL_TITLES = ["위키 라이브러리", "문서와 Graphify", "Wiki Agent"]
 GUI_ACTION_LABELS = ["raw 스캔", "새 source 요약", "pending concept 조직", "wiki lint", "maintenance 실행", "에이전트에게 질문"]
 GUI_GRAPH_TYPE_LABELS = {
     "concept": "개념",
     "source": "원문",
     "answer": "답변",
-    "journal": "답변",
+    "journal": "저널",
     "index": "색인",
     "overview": "개요",
     "page": "문서",
@@ -26,16 +32,87 @@ GUI_STYLE_COLORS = {
     "sidebar_bg": "#eef0f4",
     "document_bg": "#f7f7f5",
     "agent_bg": "#f3f5f8",
+    "surface": "#ffffff",
     "border": "#d5dbe6",
     "text": "#242936",
     "muted": "#6f7785",
-    "accent": "#74a7ff",
+    "accent": "#4e7fd8",
+    "accent_soft": "#dbe7ff",
 }
 
 
-class DesktopGuiPresenter:
+@dataclass(frozen=True)
+class AgentRouteResult:
+    route: str
+    status: str
+    answer: str
+    used_pages: list[dict[str, Any]]
+    related_pages: list[dict[str, Any]]
+    error: str | None = None
+    fallback_reason: str | None = None
+
+
+class DirectAdapterAgentFallback:
     def __init__(self, adapter: Any) -> None:
         self.adapter = adapter
+
+    def ask(self, query: str) -> AgentRouteResult:
+        answer = self.adapter.answer_question(query)
+        return _route_result_from_answer(answer, route="direct fallback")
+
+
+class McpCodexAgentRoute:
+    """GUI-facing route that asks through the local MCP tool registry first."""
+
+    def __init__(
+        self,
+        config: DomainConfig,
+        *,
+        registry_factory: Callable[[DomainConfig], dict[str, Callable[..., Any]]] = create_tool_registry,
+        fallback: DirectAdapterAgentFallback | None = None,
+    ) -> None:
+        self.config = config
+        self.registry_factory = registry_factory
+        self.fallback = fallback
+
+    def ask(self, query: str) -> AgentRouteResult:
+        provider = load_agent_provider_config("answer").provider
+        route = "mcp/codex" if provider == PROVIDER_CODEX else "mcp/rule_based"
+        try:
+            registry = self.registry_factory(self.config)
+            answer_tool = registry["answer_question"]
+            answer = answer_tool(query)
+            result = _route_result_from_answer(answer, route=route)
+            if result.route == route and answer.get("fallback") and provider == PROVIDER_CODEX:
+                return AgentRouteResult(
+                    route="mcp/codex fallback",
+                    status=result.status,
+                    answer=result.answer,
+                    used_pages=result.used_pages,
+                    related_pages=result.related_pages,
+                    error=result.error,
+                    fallback_reason=result.fallback_reason,
+                )
+            return result
+        except Exception as exc:
+            if self.fallback is None:
+                raise
+            result = self.fallback.ask(query)
+            return AgentRouteResult(
+                route="direct fallback",
+                status=result.status,
+                answer=result.answer,
+                used_pages=result.used_pages,
+                related_pages=result.related_pages,
+                error=str(exc),
+                fallback_reason="MCP route 실행 실패로 direct adapter fallback 사용",
+            )
+
+
+class DesktopGuiPresenter:
+    def __init__(self, adapter: Any, *, agent_route: Any | None = None) -> None:
+        self.adapter = adapter
+        self.agent_route = agent_route or DirectAdapterAgentFallback(adapter)
 
     def scan_raw_sources(self) -> str:
         result = self.adapter.scan_raw_sources()
@@ -51,6 +128,8 @@ class DesktopGuiPresenter:
         return (
             "source 요약 완료: "
             f"요약 {result.get('summarized_count', 0)}개, "
+            f"Codex {result.get('codex_used_count', 0)}개, "
+            f"fallback {result.get('fallback_count', 0)}개, "
             f"검토 필요 {result.get('needs_review_count', 0)}개"
         )
 
@@ -60,7 +139,8 @@ class DesktopGuiPresenter:
             "concept 조직 완료: "
             f"승격 {result.get('promoted_count', 0)}개, "
             f"병합 {result.get('merged_count', 0)}개, "
-            f"보류 {result.get('dropped_count', 0)}개"
+            f"보류 {result.get('skipped_count', result.get('dropped_count', 0))}개, "
+            f"fallback {result.get('fallback_count', 0)}개"
         )
 
     def run_wiki_lint(self) -> str:
@@ -68,7 +148,7 @@ class DesktopGuiPresenter:
         if result.get("ok"):
             return "wiki lint 통과"
         issues = result.get("issues", [])
-        return "wiki lint 경고:\n" + "\n".join(f"- {item['path']}: {item['message']}" for item in issues)
+        return "wiki lint 실패:\n" + "\n".join(f"- {_short_path(str(item['path']))}: {item['message']}" for item in issues)
 
     def run_maintenance_workflow(self) -> str:
         raw_before = _raw_snapshot(self.adapter)
@@ -103,287 +183,613 @@ class DesktopGuiPresenter:
     def ask_agent(self, query: str) -> str:
         if not query.strip():
             return "질문을 입력하세요."
-        answer = self.adapter.answer_question(query)
-        provider = answer.get("provider", "rule_based")
-        fallback = bool(answer.get("fallback"))
-        provider_line = f"provider: {provider}"
-        if fallback:
-            provider_line += f" fallback ({answer.get('codex_status', 'codex_error')})"
-        lines = [answer["answer"], "", provider_line]
-        if fallback and answer.get("fallback_reason"):
-            lines.append(f"fallback reason: {answer['fallback_reason']}")
+        result = self.agent_route.ask(query)
+        lines = [
+            result.answer,
+            "",
+            f"agent route: {result.route}",
+            f"status: {result.status}",
+        ]
+        if result.error:
+            lines.append(f"route error: {result.error}")
+        if result.fallback_reason:
+            lines.append(f"fallback reason: {result.fallback_reason}")
+
         lines.extend(["", "used pages:"])
-        for item in answer.get("used_pages", []):
-            lines.append(f"- {item['path']}: {item.get('title', '')}")
-        lines.append("")
-        lines.append("related pages:")
-        related = answer.get("related_pages", [])
-        if not related:
+        if result.used_pages:
+            for item in result.used_pages:
+                lines.append(f"- {item.get('path', '')}: {item.get('title', '')}")
+        else:
             lines.append("- 없음")
-        for item in related:
-            lines.append(f"- {item['path']}: {item.get('title', '')}")
+
+        lines.extend(["", "related pages:"])
+        if result.related_pages:
+            for item in result.related_pages:
+                lines.append(f"- {item.get('path', '')}: {item.get('title', '')}")
+        else:
+            lines.append("- 없음")
         return "\n".join(lines)
 
 
-class DesktopWikiApp:
-    def __init__(self, config: DomainConfig) -> None:
-        import tkinter as tk
-        from tkinter import ttk
-
-        self.tk = tk
-        self.ttk = ttk
-        self.adapter = WikiToolAdapter(config)
-        self.presenter = DesktopGuiPresenter(self.adapter)
-        self.root = tk.Tk()
-        self.root.title("LLM Wiki Tool v2")
-        self.root.geometry("1440x840")
-        self.root.configure(bg=GUI_STYLE_COLORS["app_bg"])
-
-        self.search_var = tk.StringVar()
-        self.question_var = tk.StringVar()
-        self.graph_status_var = tk.StringVar(value="graph node에 마우스를 올리면 전체 제목을 볼 수 있습니다.")
-        self.page_items: dict[str, str] = {}
-        self.related_items: dict[str, str] = {}
-        self.graph_tooltips: dict[str, str] = {}
-
-        self._build_layout()
-        self.refresh_pages()
-
-    def run(self) -> None:
-        self.root.mainloop()
-
-    def _build_layout(self) -> None:
-        ttk = self.ttk
-        tk = self.tk
-        self._configure_style()
-        main = ttk.PanedWindow(self.root, orient=tk.HORIZONTAL)
-        main.pack(fill=tk.BOTH, expand=True)
-
-        left = ttk.Frame(main, padding=12, style="Sidebar.TFrame")
-        center = ttk.Frame(main, padding=(26, 18), style="Document.TFrame")
-        right = ttk.Frame(main, padding=12, style="Agent.TFrame")
-        main.add(left, weight=1)
-        main.add(center, weight=3)
-        main.add(right, weight=2)
-        self.root.after(0, lambda: self._apply_initial_panel_sizes(main))
-
-        ttk.Label(left, text="LLM 위키", style="Title.TLabel").pack(anchor=tk.W)
-        ttk.Label(left, text=GUI_PANEL_TITLES[0], style="Hint.TLabel").pack(anchor=tk.W, pady=(0, 10))
-        search_row = ttk.Frame(left)
-        search_row.pack(fill=tk.X, pady=(6, 6))
-        ttk.Entry(search_row, textvariable=self.search_var).pack(side=tk.LEFT, fill=tk.X, expand=True)
-        ttk.Button(search_row, text="검색", command=self.refresh_pages).pack(side=tk.LEFT, padx=(6, 0))
-        self.page_tree = ttk.Treeview(left, columns=("type",), show="tree headings", height=28)
-        self.page_tree.heading("#0", text="page")
-        self.page_tree.heading("type", text="type")
-        self.page_tree.pack(fill=tk.BOTH, expand=True)
-        self.page_tree.bind("<<TreeviewSelect>>", self._on_page_selected)
-
-        ttk.Label(center, text=GUI_PANEL_TITLES[1], style="SectionTitle.TLabel").pack(anchor=tk.W)
-        self.content_text = tk.Text(
-            center,
-            wrap=tk.WORD,
-            height=30,
-            bg=GUI_STYLE_COLORS["document_bg"],
-            fg=GUI_STYLE_COLORS["text"],
-            relief=tk.FLAT,
-            padx=16,
-            pady=14,
-            font=("Segoe UI", 11),
-        )
-        self.content_text.pack(fill=tk.BOTH, expand=True, pady=(6, 6))
-        ttk.Label(center, text="주변 graph", style="SectionTitle.TLabel").pack(anchor=tk.W)
-        self.graph_canvas = tk.Canvas(
-            center,
-            height=220,
-            bg="#f0f2f5",
-            highlightthickness=1,
-            highlightbackground=GUI_STYLE_COLORS["border"],
-        )
-        self.graph_canvas.pack(fill=tk.BOTH, expand=False)
-        self.graph_canvas.bind("<Motion>", self._on_graph_motion)
-        self.graph_canvas.bind("<Leave>", self._on_graph_leave)
-        self.graph_canvas.bind("<Button-1>", self._on_graph_click)
-        ttk.Label(center, textvariable=self.graph_status_var, style="GraphStatus.TLabel").pack(anchor=tk.W, pady=(4, 0))
-
-        ttk.Label(right, text=GUI_PANEL_TITLES[2], style="SectionTitle.TLabel").pack(anchor=tk.W)
-        action_group = ttk.LabelFrame(right, text="raw maintenance", padding=8)
-        action_group.pack(fill=tk.X, pady=(8, 10))
-        for label, command in [
-            ("raw 스캔", self._scan),
-            ("새 source 요약", self._summarize),
-            ("pending concept 조직", self._organize),
-            ("wiki lint", self._lint),
-            ("maintenance 실행", self._maintenance),
-            ("상태 새로고침", self._status),
-        ]:
-            ttk.Button(action_group, text=label, command=command).pack(fill=tk.X, pady=(5, 0))
-
-        ttk.Label(right, text="질문", style="SectionTitle.TLabel").pack(anchor=tk.W, pady=(8, 2))
-        ttk.Entry(right, textvariable=self.question_var).pack(fill=tk.X)
-        ttk.Button(right, text="에이전트에게 질문", command=self._ask).pack(fill=tk.X, pady=(6, 6))
-        self.agent_text = tk.Text(
-            right,
-            wrap=tk.WORD,
-            height=22,
-            bg="#ffffff",
-            fg=GUI_STYLE_COLORS["text"],
-            relief=tk.FLAT,
-            padx=10,
-            pady=10,
-            font=("Segoe UI", 10),
-        )
-        self.agent_text.pack(fill=tk.BOTH, expand=True)
-
-    def _configure_style(self) -> None:
-        style = self.ttk.Style(self.root)
-        try:
-            style.theme_use("clam")
-        except self.tk.TclError:
-            pass
-        style.configure("Sidebar.TFrame", background=GUI_STYLE_COLORS["sidebar_bg"])
-        style.configure("Document.TFrame", background=GUI_STYLE_COLORS["document_bg"])
-        style.configure("Agent.TFrame", background=GUI_STYLE_COLORS["agent_bg"])
-        style.configure(
-            "Title.TLabel",
-            background=GUI_STYLE_COLORS["sidebar_bg"],
-            foreground=GUI_STYLE_COLORS["text"],
-            font=("Segoe UI", 18, "bold"),
-        )
-        style.configure(
-            "Hint.TLabel",
-            background=GUI_STYLE_COLORS["sidebar_bg"],
-            foreground=GUI_STYLE_COLORS["muted"],
-            font=("Segoe UI", 10),
-        )
-        style.configure(
-            "SectionTitle.TLabel",
-            background=GUI_STYLE_COLORS["app_bg"],
-            foreground=GUI_STYLE_COLORS["text"],
-            font=("Segoe UI", 12, "bold"),
-        )
-        style.configure(
-            "GraphStatus.TLabel",
-            background=GUI_STYLE_COLORS["document_bg"],
-            foreground=GUI_STYLE_COLORS["muted"],
-            font=("Segoe UI", 9),
-        )
-        style.configure("TButton", padding=(10, 7), font=("Segoe UI", 10, "bold"))
-        style.configure("TEntry", padding=6)
-        style.configure("Treeview", rowheight=26, font=("Segoe UI", 10))
-        style.configure("Treeview.Heading", font=("Segoe UI", 9, "bold"))
-
-    def _apply_initial_panel_sizes(self, main: Any) -> None:
-        left_width, center_width, _right_width = GUI_PANEL_WEIGHTS
-        try:
-            main.sashpos(0, left_width)
-            main.sashpos(1, left_width + center_width)
-        except self.tk.TclError:
-            return
-
-    def refresh_pages(self) -> None:
-        query = self.search_var.get().strip()
-        pages = self.adapter.search_wiki(query, limit=100) if query else self.adapter.list_wiki_pages()
-        self.page_tree.delete(*self.page_tree.get_children())
-        self.page_items.clear()
-        for page in pages:
-            item_id = self.page_tree.insert("", "end", text=page["path"], values=(page["type"],))
-            self.page_items[item_id] = page["path"]
-
-    def _on_page_selected(self, _event: object) -> None:
-        selected = self.page_tree.selection()
-        if not selected:
-            return
-        path = self.page_items[selected[0]]
-        self._show_page(path)
-
-    def _show_page(self, path: str) -> None:
-        self._set_text(self.content_text, self.adapter.read_wiki_page(path))
-        graph = self.adapter.get_wiki_graph()
-        node_by_path = {node["path"]: node for node in graph.get("nodes", [])}
-        selected = node_by_path.get(path, _fallback_graph_node(path))
-        related = self.adapter.get_related_pages(path, depth=1)
-        self._draw_graph(selected, related)
-
-    def _draw_graph(self, selected: dict[str, Any], related: list[dict[str, Any]]) -> None:
-        width = max(self.graph_canvas.winfo_width(), 520)
-        height = max(self.graph_canvas.winfo_height(), 220)
-        layout = build_local_graph_layout(selected, related, width=width, height=height)
-        self.graph_canvas.delete("all")
-        self.related_items.clear()
-        self.graph_tooltips.clear()
-        for edge in layout["edges"]:
-            self.graph_canvas.create_line(
-                edge["x1"],
-                edge["y1"],
-                edge["x2"],
-                edge["y2"],
-                fill="#c9d0dc",
-                width=2,
-            )
-        for node in layout["nodes"]:
-            tag = f"graph-node-{len(self.related_items)}"
-            self.related_items[tag] = node["path"]
-            self.graph_tooltips[tag] = _graph_status_text(node)
-            _draw_canvas_node(self.graph_canvas, node, tag)
-        self.graph_status_var.set("관련 문서 없음" if not related else "node를 클릭하면 해당 wiki page로 이동합니다.")
-
-    def _on_graph_motion(self, event: Any) -> None:
-        tag = _current_graph_node_tag(self.graph_canvas)
-        if not tag:
-            self.graph_canvas.configure(cursor="")
-            return
-        path = self.related_items.get(tag)
-        if path:
-            self.graph_canvas.configure(cursor="hand2")
-            self.graph_status_var.set(self.graph_tooltips.get(tag, path))
-
-    def _on_graph_leave(self, _event: object) -> None:
-        self.graph_canvas.configure(cursor="")
-        self.graph_status_var.set("graph node에 마우스를 올리면 전체 제목을 볼 수 있습니다.")
-
-    def _on_graph_click(self, _event: object) -> None:
-        tag = _current_graph_node_tag(self.graph_canvas)
-        path = self.related_items.get(tag or "")
-        if path:
-            self._show_page(path)
-
-    def _scan(self) -> None:
-        self._set_agent_status(self.presenter.scan_raw_sources())
-        self.refresh_pages()
-
-    def _summarize(self) -> None:
-        self._set_agent_status(self.presenter.summarize_new_sources())
-        self.refresh_pages()
-
-    def _organize(self) -> None:
-        self._set_agent_status(self.presenter.organize_pending_sources())
-        self.refresh_pages()
-
-    def _lint(self) -> None:
-        self._set_agent_status(self.presenter.run_wiki_lint())
-
-    def _maintenance(self) -> None:
-        self._set_agent_status(self.presenter.run_maintenance_workflow())
-        self.refresh_pages()
-
-    def _status(self) -> None:
-        self._set_agent_status(self.presenter.wiki_status())
-
-    def _ask(self) -> None:
-        self._set_agent_status(self.presenter.ask_agent(self.question_var.get()))
-
-    def _set_agent_status(self, message: str) -> None:
-        self._set_text(self.agent_text, message)
-
-    def _set_text(self, widget: Any, value: str) -> None:
-        widget.delete("1.0", self.tk.END)
-        widget.insert(self.tk.END, value)
+def create_desktop_application(config: DomainConfig) -> tuple[Any, Any]:
+    deps = _load_pyside6()
+    QApplication = deps["QApplication"]
+    app = QApplication.instance() or QApplication([])
+    app.setStyleSheet(_stylesheet())
+    window = _create_desktop_window(config, deps)
+    return app, window
 
 
 def run_desktop_gui(config: DomainConfig) -> None:
-    app = DesktopWikiApp(config)
-    app.run()
+    app, window = create_desktop_application(config)
+    window.show()
+    app.exec()
+
+
+def _load_pyside6() -> dict[str, Any]:
+    try:
+        from PySide6.QtCore import QPointF, Qt, QUrl, Signal
+        from PySide6.QtGui import QColor, QDesktopServices, QFont, QPainter, QPen, QPolygonF
+        from PySide6.QtWidgets import (
+            QApplication,
+            QFrame,
+            QHBoxLayout,
+            QLabel,
+            QLineEdit,
+            QListWidget,
+            QListWidgetItem,
+            QMainWindow,
+            QPushButton,
+            QSizePolicy,
+            QSplitter,
+            QTextBrowser,
+            QVBoxLayout,
+            QWidget,
+        )
+    except ModuleNotFoundError as exc:
+        if exc.name and exc.name.startswith("PySide6"):
+            raise RuntimeError("PySide6 desktop GUI를 실행하려면 `pip install -r requirements.txt`를 실행하세요.") from exc
+        raise
+    return locals()
+
+
+def _create_desktop_window(config: DomainConfig, deps: dict[str, Any]) -> Any:
+    QColor = deps["QColor"]
+    QDesktopServices = deps["QDesktopServices"]
+    QFont = deps["QFont"]
+    QFrame = deps["QFrame"]
+    QHBoxLayout = deps["QHBoxLayout"]
+    QLabel = deps["QLabel"]
+    QLineEdit = deps["QLineEdit"]
+    QListWidget = deps["QListWidget"]
+    QListWidgetItem = deps["QListWidgetItem"]
+    QMainWindow = deps["QMainWindow"]
+    QPointF = deps["QPointF"]
+    QPainter = deps["QPainter"]
+    QPen = deps["QPen"]
+    QPolygonF = deps["QPolygonF"]
+    QPushButton = deps["QPushButton"]
+    QSizePolicy = deps["QSizePolicy"]
+    QSplitter = deps["QSplitter"]
+    QTextBrowser = deps["QTextBrowser"]
+    Qt = deps["Qt"]
+    QUrl = deps["QUrl"]
+    Signal = deps["Signal"]
+    QVBoxLayout = deps["QVBoxLayout"]
+    QWidget = deps["QWidget"]
+
+    class MiniGraphWidget(QWidget):
+        nodeClicked = Signal(str)
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.setObjectName("MiniGraph")
+            self.setMinimumHeight(230)
+            self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            self._selected: dict[str, Any] = _fallback_graph_node("")
+            self._related: list[dict[str, Any]] = []
+            self._layout: dict[str, list[dict[str, Any]]] = {"nodes": [], "edges": []}
+            self.setMouseTracking(True)
+
+        def set_graph(self, selected: dict[str, Any], related: list[dict[str, Any]]) -> None:
+            self._selected = selected
+            self._related = related[:10]
+            self._rebuild_layout()
+            self.update()
+
+        def resizeEvent(self, event: Any) -> None:  # noqa: N802 - Qt API name
+            self._rebuild_layout()
+            super().resizeEvent(event)
+
+        def paintEvent(self, event: Any) -> None:  # noqa: N802 - Qt API name
+            painter = QPainter(self)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            painter.fillRect(self.rect(), QColor("#f0f2f5"))
+            painter.setPen(QPen(QColor("#c9d0dc"), 2))
+            for edge in self._layout.get("edges", []):
+                painter.drawLine(float(edge["x1"]), float(edge["y1"]), float(edge["x2"]), float(edge["y2"]))
+            for node in self._layout.get("nodes", []):
+                self._draw_node(painter, node)
+            super().paintEvent(event)
+
+        def mouseMoveEvent(self, event: Any) -> None:  # noqa: N802 - Qt API name
+            node = self._node_at(event.position().x(), event.position().y())
+            if node:
+                self.setCursor(Qt.CursorShape.PointingHandCursor)
+                self.setToolTip(_graph_status_text(node))
+            else:
+                self.setCursor(Qt.CursorShape.ArrowCursor)
+                self.setToolTip("")
+            super().mouseMoveEvent(event)
+
+        def mousePressEvent(self, event: Any) -> None:  # noqa: N802 - Qt API name
+            if event.button() == Qt.MouseButton.LeftButton:
+                node = self._node_at(event.position().x(), event.position().y())
+                if node and node.get("path"):
+                    self.nodeClicked.emit(str(node["path"]))
+            super().mousePressEvent(event)
+
+        def _rebuild_layout(self) -> None:
+            width = max(self.width(), 520)
+            height = max(self.height(), 230)
+            self._layout = build_local_graph_layout(self._selected, self._related, width=width, height=height)
+
+        def _node_at(self, x: float, y: float) -> dict[str, Any] | None:
+            for node in reversed(self._layout.get("nodes", [])):
+                dx = x - float(node["x"])
+                dy = y - float(node["y"])
+                if math.sqrt(dx * dx + dy * dy) <= float(node["r"]) + 8:
+                    return node
+            return None
+
+        def _draw_node(self, painter: Any, node: dict[str, Any]) -> None:
+            x = float(node["x"])
+            y = float(node["y"])
+            radius = float(node["r"])
+            fill = QColor(str(node.get("color") or "#d5dbe6"))
+            painter.setBrush(fill)
+            painter.setPen(QPen(QColor("#6f7785"), 2 if node.get("selected") else 1))
+            shape = str(node.get("shape") or "circle")
+            if shape == "square":
+                painter.drawRect(x - radius, y - radius, radius * 2, radius * 2)
+            elif shape == "diamond":
+                painter.drawPolygon(
+                    QPolygonF(
+                        [
+                            QPointF(x, y - radius),
+                            QPointF(x + radius, y),
+                            QPointF(x, y + radius),
+                            QPointF(x - radius, y),
+                        ]
+                    )
+                )
+            elif shape == "hexagon":
+                points = [
+                    QPointF(x + math.cos(math.pi / 6 + math.tau * index / 6) * radius, y + math.sin(math.pi / 6 + math.tau * index / 6) * radius)
+                    for index in range(6)
+                ]
+                painter.drawPolygon(QPolygonF(points))
+            else:
+                painter.drawEllipse(QPointF(x, y), radius, radius)
+            painter.setPen(QColor(GUI_STYLE_COLORS["text"]))
+            font = QFont("Segoe UI", 8)
+            font.setBold(True)
+            painter.setFont(font)
+            label = str(node.get("label") or "")
+            painter.drawText(int(x - 58), int(y + radius + 5), 116, 30, Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop, label)
+
+    class WikiDesktopWindow(QMainWindow):
+        def __init__(self, domain_config: DomainConfig) -> None:
+            super().__init__()
+            self.config = domain_config
+            self.adapter = WikiToolAdapter(domain_config)
+            self.presenter = DesktopGuiPresenter(
+                self.adapter,
+                agent_route=McpCodexAgentRoute(domain_config, fallback=DirectAdapterAgentFallback(self.adapter)),
+            )
+            self._pages: list[dict[str, Any]] = []
+            self._selected_path: str | None = None
+            self._valid_paths: set[str] = set()
+            self.setWindowTitle("LLM Wiki Tool v2")
+            self.resize(1440, 840)
+            self._build_layout()
+            self.refresh_pages()
+
+        def _build_layout(self) -> None:
+            splitter = QSplitter(Qt.Orientation.Horizontal)
+            splitter.setObjectName("RootSplitter")
+            splitter.addWidget(self._build_sidebar())
+            splitter.addWidget(self._build_document_panel())
+            splitter.addWidget(self._build_agent_panel())
+            splitter.setSizes(list(GUI_PANEL_WEIGHTS))
+            self.setCentralWidget(splitter)
+
+        def _build_sidebar(self) -> Any:
+            panel = QFrame()
+            panel.setObjectName("Sidebar")
+            layout = QVBoxLayout(panel)
+            layout.setContentsMargins(18, 18, 14, 18)
+            layout.setSpacing(10)
+
+            title = QLabel("LLM Wiki")
+            title.setObjectName("AppTitle")
+            layout.addWidget(title)
+            subtitle = QLabel(GUI_PANEL_TITLES[0])
+            subtitle.setObjectName("MutedLabel")
+            layout.addWidget(subtitle)
+
+            self.search_input = QLineEdit()
+            self.search_input.setPlaceholderText("문서 검색")
+            self.search_input.returnPressed.connect(self.refresh_pages)
+            layout.addWidget(self.search_input)
+
+            self.page_list = QListWidget()
+            self.page_list.setObjectName("PageList")
+            self.page_list.currentItemChanged.connect(self._on_page_selected)
+            layout.addWidget(self.page_list, stretch=1)
+            return panel
+
+        def _build_document_panel(self) -> Any:
+            panel = QFrame()
+            panel.setObjectName("DocumentPanel")
+            layout = QVBoxLayout(panel)
+            layout.setContentsMargins(24, 18, 24, 18)
+            layout.setSpacing(10)
+
+            header = QLabel(GUI_PANEL_TITLES[1])
+            header.setObjectName("PanelTitle")
+            layout.addWidget(header)
+
+            self.document_view = QTextBrowser()
+            self.document_view.setObjectName("DocumentView")
+            self.document_view.setOpenExternalLinks(False)
+            self.document_view.anchorClicked.connect(self._open_document_link)
+            layout.addWidget(self.document_view, stretch=1)
+
+            graph_title = QLabel("Graphify")
+            graph_title.setObjectName("PanelTitle")
+            layout.addWidget(graph_title)
+            self.graph_widget = MiniGraphWidget()
+            self.graph_widget.nodeClicked.connect(self._select_path)
+            layout.addWidget(self.graph_widget)
+            self.graph_status = QLabel("graph node에 마우스를 올리면 전체 제목을 볼 수 있습니다.")
+            self.graph_status.setObjectName("MutedLabel")
+            layout.addWidget(self.graph_status)
+            return panel
+
+        def _build_agent_panel(self) -> Any:
+            panel = QFrame()
+            panel.setObjectName("AgentPanel")
+            layout = QVBoxLayout(panel)
+            layout.setContentsMargins(14, 18, 18, 18)
+            layout.setSpacing(10)
+
+            header = QLabel(GUI_PANEL_TITLES[2])
+            header.setObjectName("PanelTitle")
+            layout.addWidget(header)
+            self.route_label = QLabel("agent route: 준비됨")
+            self.route_label.setObjectName("RouteLabel")
+            layout.addWidget(self.route_label)
+
+            maintenance = QFrame()
+            maintenance.setObjectName("MaintenanceBox")
+            maintenance_layout = QVBoxLayout(maintenance)
+            maintenance_layout.setContentsMargins(10, 10, 10, 10)
+            maintenance_layout.setSpacing(6)
+            for label, command in [
+                ("raw 스캔", self._scan),
+                ("새 source 요약", self._summarize),
+                ("pending concept 조직", self._organize),
+                ("wiki lint", self._lint),
+                ("maintenance 실행", self._maintenance),
+                ("상태 새로고침", self._status),
+            ]:
+                button = QPushButton(label)
+                button.clicked.connect(command)
+                maintenance_layout.addWidget(button)
+            layout.addWidget(maintenance)
+
+            self.question_input = QLineEdit()
+            self.question_input.setPlaceholderText("질문을 입력하세요")
+            self.question_input.returnPressed.connect(self._ask)
+            layout.addWidget(self.question_input)
+            ask_row = QHBoxLayout()
+            ask_button = QPushButton("에이전트에게 질문")
+            ask_button.setObjectName("PrimaryButton")
+            ask_button.clicked.connect(self._ask)
+            ask_row.addWidget(ask_button)
+            layout.addLayout(ask_row)
+
+            self.agent_output = QTextBrowser()
+            self.agent_output.setObjectName("AgentOutput")
+            layout.addWidget(self.agent_output, stretch=1)
+            return panel
+
+        def refresh_pages(self) -> None:
+            query = self.search_input.text().strip() if hasattr(self, "search_input") else ""
+            self._pages = self.adapter.search_wiki(query, limit=100) if query else self.adapter.list_wiki_pages()
+            self._valid_paths = {str(page.get("path", "")) for page in self.adapter.list_wiki_pages()}
+            self._render_page_list()
+            if self._selected_path and self._selected_path in self._valid_paths:
+                self._select_path(self._selected_path)
+            elif self._pages:
+                self._select_path(str(self._pages[0]["path"]))
+            else:
+                self.document_view.setPlainText("wiki page가 없습니다. raw 폴더에 자료를 넣고 maintenance를 실행하세요.")
+                self.graph_widget.set_graph(_fallback_graph_node(""), [])
+
+        def _render_page_list(self) -> None:
+            self.page_list.clear()
+            if not self._pages:
+                item = QListWidgetItem("검색 결과 없음")
+                item.setData(Qt.ItemDataRole.UserRole, "")
+                item.setFlags(Qt.ItemFlag.NoItemFlags)
+                self.page_list.addItem(item)
+                return
+            for group_title, pages in _group_pages(self._pages):
+                header = QListWidgetItem(group_title)
+                header.setData(Qt.ItemDataRole.UserRole, "")
+                header.setFlags(Qt.ItemFlag.NoItemFlags)
+                header.setForeground(QColor(GUI_STYLE_COLORS["muted"]))
+                self.page_list.addItem(header)
+                for page in pages:
+                    label = f"{page.get('label') or page.get('title') or page.get('path')}"
+                    item = QListWidgetItem(label)
+                    item.setToolTip(str(page.get("tooltip") or page.get("title") or page.get("path")))
+                    item.setData(Qt.ItemDataRole.UserRole, str(page.get("path", "")))
+                    self.page_list.addItem(item)
+
+        def _on_page_selected(self, current: Any, _previous: Any) -> None:
+            if current is None:
+                return
+            path = current.data(Qt.ItemDataRole.UserRole)
+            if path:
+                self._show_page(str(path))
+
+        def _select_path(self, path: str) -> None:
+            if not path:
+                return
+            for index in range(self.page_list.count()):
+                item = self.page_list.item(index)
+                if item.data(Qt.ItemDataRole.UserRole) == path:
+                    self.page_list.setCurrentItem(item)
+                    return
+            self._show_page(path)
+
+        def _show_page(self, path: str) -> None:
+            self._selected_path = path
+            content = self.adapter.read_wiki_page(path)
+            self.document_view.setMarkdown(content)
+            graph = self.adapter.get_wiki_graph()
+            node_by_path = {node["path"]: node for node in graph.get("nodes", [])}
+            selected = node_by_path.get(path, _fallback_graph_node(path))
+            related = self.adapter.get_related_pages(path, depth=1)
+            self.graph_widget.set_graph(selected, related)
+            self.graph_status.setText("관련 문서 없음" if not related else "node를 클릭하면 해당 wiki page로 이동합니다.")
+
+        def _open_document_link(self, url: Any) -> None:
+            href = url.toString()
+            target = resolve_wiki_link(self._selected_path or "", href, self._valid_paths)
+            if target:
+                self._select_path(target)
+            else:
+                QDesktopServices.openUrl(QUrl(href))
+
+        def _scan(self) -> None:
+            self._set_agent_output(self.presenter.scan_raw_sources())
+            self.refresh_pages()
+
+        def _summarize(self) -> None:
+            self._set_agent_output(self.presenter.summarize_new_sources())
+            self.refresh_pages()
+
+        def _organize(self) -> None:
+            self._set_agent_output(self.presenter.organize_pending_sources())
+            self.refresh_pages()
+
+        def _lint(self) -> None:
+            self._set_agent_output(self.presenter.run_wiki_lint())
+
+        def _maintenance(self) -> None:
+            self._set_agent_output(self.presenter.run_maintenance_workflow())
+            self.refresh_pages()
+
+        def _status(self) -> None:
+            self._set_agent_output(self.presenter.wiki_status())
+
+        def _ask(self) -> None:
+            message = self.presenter.ask_agent(self.question_input.text())
+            self.route_label.setText(_agent_route_line(message))
+            self._set_agent_output(message)
+
+        def _set_agent_output(self, message: str) -> None:
+            self.agent_output.setHtml(_plain_text_html(message))
+
+    return WikiDesktopWindow(config)
+
+
+def _route_result_from_answer(answer: dict[str, Any], *, route: str) -> AgentRouteResult:
+    fallback = bool(answer.get("fallback"))
+    status = str(answer.get("status") or ("fallback" if fallback else "ok"))
+    if fallback and answer.get("codex_status"):
+        status = str(answer["codex_status"])
+    return AgentRouteResult(
+        route=route,
+        status=status,
+        answer=str(answer.get("answer") or ""),
+        used_pages=list(answer.get("used_pages") or []),
+        related_pages=list(answer.get("related_pages") or []),
+        fallback_reason=str(answer["fallback_reason"]) if answer.get("fallback_reason") else None,
+        error=str(answer["error"]) if answer.get("error") else None,
+    )
+
+
+def _agent_route_line(message: str) -> str:
+    for line in message.splitlines():
+        if line.startswith("agent route:"):
+            return line
+    return "agent route: 알 수 없음"
+
+
+def _plain_text_html(message: str) -> str:
+    return "<div class='agent-message'>" + "<br>".join(escape(line) for line in message.splitlines()) + "</div>"
+
+
+def _stylesheet() -> str:
+    return f"""
+    QMainWindow {{
+        background: {GUI_STYLE_COLORS["app_bg"]};
+        color: {GUI_STYLE_COLORS["text"]};
+    }}
+    QFrame#Sidebar {{
+        background: {GUI_STYLE_COLORS["sidebar_bg"]};
+        border-right: 1px solid {GUI_STYLE_COLORS["border"]};
+    }}
+    QFrame#DocumentPanel {{
+        background: {GUI_STYLE_COLORS["document_bg"]};
+    }}
+    QFrame#AgentPanel {{
+        background: {GUI_STYLE_COLORS["agent_bg"]};
+        border-left: 1px solid {GUI_STYLE_COLORS["border"]};
+    }}
+    QLabel#AppTitle {{
+        font-family: "Segoe UI";
+        font-size: 24px;
+        font-weight: 700;
+        color: {GUI_STYLE_COLORS["text"]};
+    }}
+    QLabel#PanelTitle {{
+        font-family: "Segoe UI";
+        font-size: 15px;
+        font-weight: 700;
+        color: {GUI_STYLE_COLORS["text"]};
+    }}
+    QLabel#MutedLabel {{
+        color: {GUI_STYLE_COLORS["muted"]};
+        font-size: 12px;
+    }}
+    QLabel#RouteLabel {{
+        color: {GUI_STYLE_COLORS["accent"]};
+        background: {GUI_STYLE_COLORS["accent_soft"]};
+        border: 1px solid #bdd1fb;
+        border-radius: 7px;
+        padding: 6px 8px;
+        font-weight: 600;
+    }}
+    QLineEdit {{
+        background: {GUI_STYLE_COLORS["surface"]};
+        border: 1px solid {GUI_STYLE_COLORS["border"]};
+        border-radius: 7px;
+        padding: 8px 9px;
+        color: {GUI_STYLE_COLORS["text"]};
+        selection-background-color: {GUI_STYLE_COLORS["accent"]};
+    }}
+    QPushButton {{
+        background: {GUI_STYLE_COLORS["surface"]};
+        border: 1px solid {GUI_STYLE_COLORS["border"]};
+        border-radius: 7px;
+        padding: 8px 10px;
+        color: {GUI_STYLE_COLORS["text"]};
+        font-weight: 600;
+    }}
+    QPushButton:hover {{
+        background: #f6f8fc;
+        border-color: #b8c6dd;
+    }}
+    QPushButton#PrimaryButton {{
+        background: {GUI_STYLE_COLORS["accent"]};
+        color: white;
+        border-color: {GUI_STYLE_COLORS["accent"]};
+    }}
+    QListWidget#PageList {{
+        background: {GUI_STYLE_COLORS["surface"]};
+        border: 1px solid {GUI_STYLE_COLORS["border"]};
+        border-radius: 8px;
+        padding: 6px;
+        outline: 0;
+    }}
+    QListWidget#PageList::item {{
+        padding: 8px 8px;
+        border-radius: 6px;
+    }}
+    QListWidget#PageList::item:selected {{
+        background: {GUI_STYLE_COLORS["accent_soft"]};
+        color: {GUI_STYLE_COLORS["text"]};
+    }}
+    QTextBrowser#DocumentView {{
+        background: {GUI_STYLE_COLORS["surface"]};
+        border: 1px solid {GUI_STYLE_COLORS["border"]};
+        border-radius: 8px;
+        padding: 18px;
+        font-family: "Segoe UI";
+        font-size: 14px;
+        line-height: 1.48;
+    }}
+    QTextBrowser#AgentOutput {{
+        background: {GUI_STYLE_COLORS["surface"]};
+        border: 1px solid {GUI_STYLE_COLORS["border"]};
+        border-radius: 8px;
+        padding: 12px;
+        font-family: "Segoe UI";
+        font-size: 13px;
+    }}
+    QFrame#MaintenanceBox {{
+        background: #edf1f7;
+        border: 1px solid {GUI_STYLE_COLORS["border"]};
+        border-radius: 8px;
+    }}
+    QWidget#MiniGraph {{
+        background: #f0f2f5;
+        border: 1px solid {GUI_STYLE_COLORS["border"]};
+        border-radius: 8px;
+    }}
+    QSplitter::handle {{
+        background: {GUI_STYLE_COLORS["border"]};
+        width: 1px;
+    }}
+    """
+
+
+def resolve_wiki_link(current_path: str, href: str, valid_paths: set[str]) -> str | None:
+    if not href or href.startswith("#"):
+        return None
+    parsed = urlparse(href)
+    if parsed.scheme and parsed.scheme not in {"file"}:
+        return None
+    candidate = unquote(parsed.path or href).replace("\\", "/")
+    if candidate in valid_paths:
+        return candidate
+    if current_path:
+        base_dir = PurePosixPath(current_path).parent.as_posix()
+        relative = posixpath.normpath(posixpath.join(base_dir, candidate))
+        if relative in valid_paths:
+            return relative
+    trimmed = candidate.lstrip("/")
+    if trimmed in valid_paths:
+        return trimmed
+    return None
+
+
+def _group_pages(pages: list[dict[str, Any]]) -> list[tuple[str, list[dict[str, Any]]]]:
+    order = [
+        ("sources", "source"),
+        ("concepts", "concept"),
+        ("answers", "answer"),
+        ("journal", "journal"),
+        ("index", "index"),
+        ("overview", "overview"),
+    ]
+    buckets: dict[str, list[dict[str, Any]]] = {}
+    for page in pages:
+        buckets.setdefault(str(page.get("type", "page")), []).append(page)
+    grouped: list[tuple[str, list[dict[str, Any]]]] = []
+    for label, page_type in order:
+        items = buckets.pop(page_type, [])
+        if items:
+            grouped.append((label, items))
+    for page_type, items in sorted(buckets.items()):
+        grouped.append((page_type, items))
+    return grouped
 
 
 def _quality_value(content: str) -> str:
@@ -448,7 +854,7 @@ def format_maintenance_report(
             f"fallback {concept_fallback}개"
         ),
         f"lint: {lint_status}, issue {len(lint_issues)}개",
-        f"안전성: {raw_integrity}, lint {lint_status.lower() if lint_ok else '실패'}, {fallback_status}",
+        f"안전성: {raw_integrity}, lint {lint_status}, {fallback_status}",
         (
             "산출물: "
             f"source {int(summarize.get('summarized_count', 0) or 0) + int(summarize.get('needs_review_count', 0) or 0)}개, "
@@ -486,7 +892,7 @@ def _format_lint_issue(issue: dict[str, Any]) -> str:
         return f"- {path}: {message}"
     if path:
         return f"- {path}"
-    return f"- {message or '알 수 없는 lint issue'}"
+    return f"- {message or '메시지 없는 lint issue'}"
 
 
 def _short_path(path: str) -> str:
@@ -560,7 +966,7 @@ def build_local_graph_layout(
     edges: list[dict[str, Any]] = []
     count = max(len(related), 1)
     for index, page in enumerate(related[:10]):
-        angle = (math.pi * 2 * index) / count
+        angle = (math.tau * index) / count
         x = center_x + math.cos(angle) * radius_x
         y = center_y + math.sin(angle) * radius_y
         node = _layout_node(page, x, y, selected=False)
@@ -583,35 +989,6 @@ def _layout_node(page: dict[str, Any], x: float, y: float, *, selected: bool) ->
         "r": 24 if selected else 16,
         "selected": selected,
     }
-
-
-def _draw_canvas_node(canvas: Any, node: dict[str, Any], tag: str) -> None:
-    x = float(node["x"])
-    y = float(node["y"])
-    radius = float(node["r"])
-    fill = str(node["color"])
-    shape = str(node["shape"])
-    tags = (tag, "graph-node")
-    if shape == "square":
-        canvas.create_rectangle(x - radius, y - radius, x + radius, y + radius, fill=fill, outline="#6f7785", width=2, tags=tags)
-    elif shape == "diamond":
-        canvas.create_polygon(x, y - radius, x + radius, y, x, y + radius, x - radius, y, fill=fill, outline="#6f7785", width=2, tags=tags)
-    elif shape == "hexagon":
-        points = []
-        for index in range(6):
-            angle = math.pi / 6 + math.pi * 2 * index / 6
-            points.extend([x + math.cos(angle) * radius, y + math.sin(angle) * radius])
-        canvas.create_polygon(*points, fill=fill, outline="#6f7785", width=2, tags=tags)
-    else:
-        canvas.create_oval(x - radius, y - radius, x + radius, y + radius, fill=fill, outline="#6f7785", width=2, tags=tags)
-    canvas.create_text(x, y + radius + 14, text=str(node["label"]), fill=GUI_STYLE_COLORS["text"], font=("Segoe UI", 9, "bold"), tags=tags)
-
-
-def _current_graph_node_tag(canvas: Any) -> str | None:
-    for tag in canvas.gettags("current"):
-        if tag.startswith("graph-node-"):
-            return tag
-    return None
 
 
 def _fallback_graph_node(path: str) -> dict[str, Any]:

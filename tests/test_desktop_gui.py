@@ -1,5 +1,5 @@
-import unittest
 import tempfile
+import unittest
 from pathlib import Path
 
 from wiki_tool.desktop_gui import (
@@ -8,10 +8,15 @@ from wiki_tool.desktop_gui import (
     GUI_PANEL_TITLES,
     GUI_PANEL_WEIGHTS,
     GUI_STYLE_COLORS,
+    AgentRouteResult,
     DesktopGuiPresenter,
-    build_local_graph_layout,
+    DirectAdapterAgentFallback,
+    McpCodexAgentRoute,
+    _agent_route_line,
     _graph_item_label,
     _graph_status_text,
+    build_local_graph_layout,
+    resolve_wiki_link,
 )
 
 
@@ -21,7 +26,7 @@ class FakeAdapter:
 
     def scan_raw_sources(self):
         self.calls.append("scan")
-        return {"new_count": 1, "changed_count": 0, "ignored_count": 0}
+        return {"scanned_count": 1, "new_count": 1, "changed_count": 0, "ignored_count": 0}
 
     def summarize_new_sources(self):
         self.calls.append("summarize")
@@ -40,6 +45,7 @@ class FakeAdapter:
             "provider": "codex",
             "promoted_count": 1,
             "merged_count": 0,
+            "skipped_count": 0,
             "dropped_count": 0,
             "codex_used_count": 1,
             "fallback_count": 1,
@@ -48,10 +54,6 @@ class FakeAdapter:
     def run_wiki_lint(self):
         self.calls.append("lint")
         return {"ok": True, "issues": []}
-
-    def ask_wiki_context(self, query, limit=5):
-        self.calls.append(("context", query, limit))
-        return [{"path": "wiki/concepts/capm.md", "title": "CAPM"}]
 
     def answer_question(self, query):
         self.calls.append(("answer", query))
@@ -122,13 +124,28 @@ class FakeAdapter:
         }
 
 
+class FakeRoute:
+    def __init__(self):
+        self.calls = []
+
+    def ask(self, query):
+        self.calls.append(query)
+        return AgentRouteResult(
+            route="mcp/codex",
+            status="ok",
+            answer="MCP tool route 답변입니다.",
+            used_pages=[{"path": "wiki/concepts/capm.md", "title": "CAPM"}],
+            related_pages=[],
+        )
+
+
 class DesktopGuiTests(unittest.TestCase):
     def test_korean_three_panel_labels_do_not_offer_upload_ux(self):
         labels = " ".join(GUI_PANEL_TITLES + GUI_ACTION_LABELS)
 
-        self.assertIn("위키 페이지", labels)
-        self.assertIn("선택한 페이지", labels)
-        self.assertIn("에이전트 제어", labels)
+        self.assertIn("위키 라이브러리", labels)
+        self.assertIn("문서와 Graphify", labels)
+        self.assertIn("Wiki Agent", labels)
         self.assertIn("raw 스캔", labels)
         self.assertIn("새 source 요약", labels)
         self.assertIn("pending concept 조직", labels)
@@ -139,7 +156,7 @@ class DesktopGuiTests(unittest.TestCase):
         self.assertEqual(GUI_STYLE_COLORS["document_bg"], "#f7f7f5")
         self.assertEqual(GUI_GRAPH_TYPE_LABELS["concept"], "개념")
 
-    def test_presenter_returns_korean_status_messages_for_agent_actions(self):
+    def test_presenter_returns_korean_status_messages_for_maintenance_actions(self):
         adapter = FakeAdapter()
         presenter = DesktopGuiPresenter(adapter)
 
@@ -147,27 +164,51 @@ class DesktopGuiTests(unittest.TestCase):
         self.assertIn("source 요약 완료", presenter.summarize_new_sources())
         self.assertIn("concept 조직 완료", presenter.organize_pending_sources())
         self.assertIn("lint 통과", presenter.run_wiki_lint())
-        self.assertIn("wiki/concepts/capm.md", presenter.ask_agent("CAPM"))
         self.assertEqual(adapter.calls[:4], ["scan", "summarize", "organize", "lint"])
 
-    def test_presenter_marks_codex_fallback_answer(self):
+    def test_presenter_uses_mcp_first_route_for_agent_answers(self):
         adapter = FakeAdapter()
-        adapter.answer_question = lambda query: {
-            "status": "ok",
-            "answer": "rule-based fallback 답변입니다.",
-            "used_pages": [],
-            "related_pages": [],
-            "provider": "rule_based",
-            "fallback": True,
-            "codex_status": "codex_timeout",
-            "fallback_reason": "Codex CLI 실행 시간이 초과되었습니다.",
-        }
-        presenter = DesktopGuiPresenter(adapter)
+        route = FakeRoute()
+        presenter = DesktopGuiPresenter(adapter, agent_route=route)
 
         message = presenter.ask_agent("CAPM")
 
-        self.assertIn("provider: rule_based fallback (codex_timeout)", message)
-        self.assertIn("fallback reason: Codex CLI 실행 시간이 초과되었습니다.", message)
+        self.assertIn("MCP tool route 답변입니다.", message)
+        self.assertIn("agent route: mcp/codex", message)
+        self.assertIn("status: ok", message)
+        self.assertIn("wiki/concepts/capm.md", message)
+        self.assertEqual(route.calls, ["CAPM"])
+        self.assertNotIn(("answer", "CAPM"), adapter.calls)
+
+    def test_direct_fallback_route_marks_route_explicitly(self):
+        adapter = FakeAdapter()
+        presenter = DesktopGuiPresenter(adapter, agent_route=DirectAdapterAgentFallback(adapter))
+
+        message = presenter.ask_agent("CAPM")
+
+        self.assertIn("agent route: direct fallback", message)
+        self.assertIn("status: ok", message)
+        self.assertIn("wiki/concepts/capm.md", message)
+
+    def test_mcp_route_falls_back_to_direct_adapter_when_registry_fails(self):
+        adapter = FakeAdapter()
+
+        def broken_registry(_config):
+            raise RuntimeError("registry unavailable")
+
+        route = McpCodexAgentRoute(object(), registry_factory=broken_registry, fallback=DirectAdapterAgentFallback(adapter))
+
+        result = route.ask("CAPM")
+
+        self.assertEqual(result.route, "direct fallback")
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(result.error, "registry unavailable")
+        self.assertEqual(result.fallback_reason, "MCP route 실행 실패로 direct adapter fallback 사용")
+        self.assertIn(("answer", "CAPM"), adapter.calls)
+
+    def test_agent_route_line_extracts_status_for_gui_label(self):
+        self.assertEqual(_agent_route_line("answer\nagent route: mcp/codex\nstatus: ok"), "agent route: mcp/codex")
+        self.assertEqual(_agent_route_line("answer only"), "agent route: 알 수 없음")
 
     def test_presenter_reports_pending_sources_and_source_quality(self):
         adapter = FakeAdapter()
@@ -194,7 +235,7 @@ class DesktopGuiTests(unittest.TestCase):
         self.assertIn("안전성: raw 불변성 확인 불가, lint 통과, fallback 발생", status)
         self.assertIn("산출물: source 1개, concept 변경 1개, graph node 2개, edge 0개", status)
         self.assertIn("원인:", status)
-        self.assertIn("concept organize fallback 1개: Codex draft 검증 실패 또는 실행 오류로 rule-based 조직 사용", status)
+        self.assertIn("concept organize fallback 1개", status)
         self.assertEqual(adapter.calls, ["scan", "summarize", "organize", "graph", "lint"])
 
     def test_maintenance_report_marks_success_when_every_stage_passes(self):
@@ -229,10 +270,7 @@ class DesktopGuiTests(unittest.TestCase):
         adapter.run_wiki_lint = lambda: adapter.calls.append("lint") or {
             "ok": False,
             "issues": [
-                {
-                    "path": "wiki/concepts/very/deep/private/capm.md",
-                    "message": "broken link 시장위험프리미엄.md",
-                },
+                {"path": "wiki/concepts/very/deep/private/capm.md", "message": "broken link 시장위험프리미엄.md"},
                 {"path": "wiki/sources/foo.md", "message": "missing evidence"},
             ],
         }
@@ -317,6 +355,13 @@ class DesktopGuiTests(unittest.TestCase):
         self.assertEqual(layout["nodes"][1]["shape"], "square")
         self.assertEqual(layout["nodes"][0]["x"], 300)
         self.assertEqual(layout["nodes"][0]["y"], 110)
+
+    def test_resolve_wiki_link_handles_relative_markdown_links(self):
+        valid_paths = {"wiki/sources/capm.md", "wiki/concepts/beta.md"}
+
+        self.assertEqual(resolve_wiki_link("wiki/concepts/capm.md", "../sources/capm.md", valid_paths), "wiki/sources/capm.md")
+        self.assertEqual(resolve_wiki_link("wiki/concepts/capm.md", "wiki/concepts/beta.md", valid_paths), "wiki/concepts/beta.md")
+        self.assertIsNone(resolve_wiki_link("wiki/concepts/capm.md", "https://example.com", valid_paths))
 
 
 if __name__ == "__main__":
