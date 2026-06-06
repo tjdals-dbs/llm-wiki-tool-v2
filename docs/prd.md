@@ -26,7 +26,7 @@ LLM Wiki Tool v2는 사용자가 정의한 지식 도메인의 raw 자료를 Mar
 - graph/lint는 wiki 구조와 link/evidence 문제를 점검할 수 있어야 합니다.
 - MCP tool은 wiki 조회, 검색, graph, related page, answer, raw scan, summarize, organize, lint를 제공해야 합니다.
 - Codex provider 사용 시 실패나 schema mismatch가 있어도 rule-based fallback이 동작해야 합니다.
-- PySide6 desktop GUI는 3분할 화면에서 유지보수 흐름, graphify 탐색, MCP-first agent route 상태를 한국어로 이해 가능하게 보여줘야 합니다.
+- PySide6 desktop GUI는 3분할 화면에서 유지보수 흐름, graphify 탐색, MCP-first agent route 상태를 한국어로 이해 가능하게 보여주고, 긴 agent/maintenance 작업 중에도 event loop를 막지 않아야 합니다.
 
 ## Non-goals
 

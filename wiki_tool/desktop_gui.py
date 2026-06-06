@@ -52,6 +52,16 @@ class AgentRouteResult:
     fallback_reason: str | None = None
 
 
+@dataclass(frozen=True)
+class GuiTaskResult:
+    kind: str
+    ok: bool
+    message: str
+    refresh_pages: bool = False
+    route_line: str | None = None
+    error: str | None = None
+
+
 class DirectAdapterAgentFallback:
     def __init__(self, adapter: Any) -> None:
         self.adapter = adapter
@@ -226,9 +236,27 @@ def run_desktop_gui(config: DomainConfig) -> None:
     app.exec()
 
 
+def build_agent_pending_message() -> str:
+    return "\n".join(["답변 생성 중...", "agent route 실행 중...", "agent route: 실행 중"])
+
+
+def build_maintenance_pending_message() -> str:
+    return "maintenance 실행 중...\nraw scan, source summary, concept organize, lint를 순서대로 실행합니다."
+
+
+def worker_success_result(kind: str, message: str, *, refresh_pages: bool) -> GuiTaskResult:
+    return GuiTaskResult(kind=kind, ok=True, message=message, refresh_pages=refresh_pages, route_line=_agent_route_line(message) if kind == "agent" else None)
+
+
+def worker_failure_result(kind: str, label: str, error: BaseException, *, refresh_pages: bool = False) -> GuiTaskResult:
+    message = f"{label} 실패\n오류: {error}"
+    route_line = "agent route: 실패" if kind == "agent" else None
+    return GuiTaskResult(kind=kind, ok=False, message=message, refresh_pages=refresh_pages, route_line=route_line, error=str(error))
+
+
 def _load_pyside6() -> dict[str, Any]:
     try:
-        from PySide6.QtCore import QPointF, Qt, QUrl, Signal
+        from PySide6.QtCore import QObject, QPointF, Qt, QThread, QUrl, Signal
         from PySide6.QtGui import QColor, QDesktopServices, QFont, QPainter, QPen, QPolygonF
         from PySide6.QtWidgets import (
             QApplication,
@@ -264,6 +292,7 @@ def _create_desktop_window(config: DomainConfig, deps: dict[str, Any]) -> Any:
     QListWidget = deps["QListWidget"]
     QListWidgetItem = deps["QListWidgetItem"]
     QMainWindow = deps["QMainWindow"]
+    QObject = deps["QObject"]
     QPointF = deps["QPointF"]
     QPainter = deps["QPainter"]
     QPen = deps["QPen"]
@@ -273,10 +302,28 @@ def _create_desktop_window(config: DomainConfig, deps: dict[str, Any]) -> Any:
     QSplitter = deps["QSplitter"]
     QTextBrowser = deps["QTextBrowser"]
     Qt = deps["Qt"]
+    QThread = deps["QThread"]
     QUrl = deps["QUrl"]
     Signal = deps["Signal"]
     QVBoxLayout = deps["QVBoxLayout"]
     QWidget = deps["QWidget"]
+
+    class BackgroundTaskWorker(QObject):
+        succeeded = Signal(object)
+        failed = Signal(object)
+
+        def __init__(self, kind: str, label: str, task: Callable[[], str], *, refresh_pages: bool) -> None:
+            super().__init__()
+            self.kind = kind
+            self.label = label
+            self.task = task
+            self.refresh_pages = refresh_pages
+
+        def run(self) -> None:
+            try:
+                self.succeeded.emit(worker_success_result(self.kind, self.task(), refresh_pages=self.refresh_pages))
+            except Exception as exc:
+                self.failed.emit(worker_failure_result(self.kind, self.label, exc))
 
     class MiniGraphWidget(QWidget):
         nodeClicked = Signal(str)
@@ -390,6 +437,10 @@ def _create_desktop_window(config: DomainConfig, deps: dict[str, Any]) -> Any:
             self._pages: list[dict[str, Any]] = []
             self._selected_path: str | None = None
             self._valid_paths: set[str] = set()
+            self._background_tasks: list[tuple[Any, Any]] = []
+            self._agent_running = False
+            self._maintenance_running = False
+            self.maintenance_buttons: list[Any] = []
             self.setWindowTitle("LLM Wiki Tool v2")
             self.resize(1440, 840)
             self._build_layout()
@@ -486,6 +537,7 @@ def _create_desktop_window(config: DomainConfig, deps: dict[str, Any]) -> Any:
             ]:
                 button = QPushButton(label)
                 button.clicked.connect(command)
+                self.maintenance_buttons.append(button)
                 maintenance_layout.addWidget(button)
             layout.addWidget(maintenance)
 
@@ -494,10 +546,10 @@ def _create_desktop_window(config: DomainConfig, deps: dict[str, Any]) -> Any:
             self.question_input.returnPressed.connect(self._ask)
             layout.addWidget(self.question_input)
             ask_row = QHBoxLayout()
-            ask_button = QPushButton("에이전트에게 질문")
-            ask_button.setObjectName("PrimaryButton")
-            ask_button.clicked.connect(self._ask)
-            ask_row.addWidget(ask_button)
+            self.ask_button = QPushButton("에이전트에게 질문")
+            self.ask_button.setObjectName("PrimaryButton")
+            self.ask_button.clicked.connect(self._ask)
+            ask_row.addWidget(self.ask_button)
             layout.addLayout(ask_row)
 
             self.agent_output = QTextBrowser()
@@ -591,16 +643,80 @@ def _create_desktop_window(config: DomainConfig, deps: dict[str, Any]) -> Any:
             self._set_agent_output(self.presenter.run_wiki_lint())
 
         def _maintenance(self) -> None:
-            self._set_agent_output(self.presenter.run_maintenance_workflow())
-            self.refresh_pages()
+            if self._maintenance_running:
+                return
+            self._maintenance_running = True
+            self._set_maintenance_enabled(False)
+            self._set_agent_output(build_maintenance_pending_message())
+            self._start_background_task(
+                kind="maintenance",
+                label="maintenance 실행",
+                task=self.presenter.run_maintenance_workflow,
+                refresh_pages=True,
+            )
 
         def _status(self) -> None:
             self._set_agent_output(self.presenter.wiki_status())
 
         def _ask(self) -> None:
-            message = self.presenter.ask_agent(self.question_input.text())
-            self.route_label.setText(_agent_route_line(message))
-            self._set_agent_output(message)
+            if self._agent_running:
+                return
+            query = self.question_input.text()
+            if not query.strip():
+                self._set_agent_output(self.presenter.ask_agent(query))
+                return
+            self._agent_running = True
+            self._set_agent_enabled(False)
+            pending_message = build_agent_pending_message()
+            self.route_label.setText(_agent_route_line(pending_message))
+            self._set_agent_output(pending_message)
+            self._start_background_task(
+                kind="agent",
+                label="에이전트 질문",
+                task=lambda: self.presenter.ask_agent(query),
+                refresh_pages=False,
+            )
+
+        def _start_background_task(self, *, kind: str, label: str, task: Callable[[], str], refresh_pages: bool) -> None:
+            thread = QThread(self)
+            worker = BackgroundTaskWorker(kind, label, task, refresh_pages=refresh_pages)
+            worker.moveToThread(thread)
+            thread.started.connect(worker.run)
+            worker.succeeded.connect(self._on_background_task_done)
+            worker.failed.connect(self._on_background_task_done)
+            worker.succeeded.connect(thread.quit)
+            worker.failed.connect(thread.quit)
+            thread.finished.connect(worker.deleteLater)
+            thread.finished.connect(thread.deleteLater)
+            thread.finished.connect(lambda: self._cleanup_background_task(thread, worker))
+            self._background_tasks.append((thread, worker))
+            thread.start()
+
+        def _on_background_task_done(self, result: GuiTaskResult) -> None:
+            if result.kind == "agent":
+                self._agent_running = False
+                self._set_agent_enabled(True)
+                self.route_label.setText(result.route_line or _agent_route_line(result.message))
+            elif result.kind == "maintenance":
+                self._maintenance_running = False
+                self._set_maintenance_enabled(True)
+            self._set_agent_output(result.message)
+            if result.refresh_pages:
+                self.refresh_pages()
+
+        def _cleanup_background_task(self, thread: Any, worker: Any) -> None:
+            try:
+                self._background_tasks.remove((thread, worker))
+            except ValueError:
+                pass
+
+        def _set_agent_enabled(self, enabled: bool) -> None:
+            self.question_input.setEnabled(enabled)
+            self.ask_button.setEnabled(enabled)
+
+        def _set_maintenance_enabled(self, enabled: bool) -> None:
+            for button in self.maintenance_buttons:
+                button.setEnabled(enabled)
 
         def _set_agent_output(self, message: str) -> None:
             self.agent_output.setHtml(_plain_text_html(message))

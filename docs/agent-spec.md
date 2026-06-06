@@ -177,6 +177,7 @@ Desktop GUI route:
 - PySide6 desktop GUI의 Wiki Agent 패널은 MCP tool registry의 `answer_question`을 우선 호출합니다.
 - GUI에는 `agent route: mcp/codex`, `agent route: mcp/rule_based`, `agent route: direct fallback` 형태로 실제 답변 경로를 표시합니다.
 - MCP route가 실패한 경우에만 direct `WikiToolAdapter.answer_question()` fallback을 사용합니다.
+- 에이전트 질문은 GUI event loop를 막지 않도록 background worker에서 실행하고, 완료 후 메인 스레드에서 출력과 route label을 갱신합니다.
 
 ## Maintenance/Review Agent
 
@@ -185,6 +186,7 @@ Desktop GUI route:
 - raw scan, summarize, organize, graph, lint 결과를 검토합니다.
 - Codex provider가 pipeline에서 사용된 경우 짧은 review를 남길 수 있습니다.
 - GUI와 runtime에 maintenance run 결과를 요약합니다.
+- PySide6 GUI의 전체 maintenance 실행은 background worker에서 실행하고, 완료 후 report와 page list를 갱신합니다.
 
 읽기 가능:
 

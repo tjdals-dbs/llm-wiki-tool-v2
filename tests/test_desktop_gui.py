@@ -11,8 +11,13 @@ from wiki_tool.desktop_gui import (
     AgentRouteResult,
     DesktopGuiPresenter,
     DirectAdapterAgentFallback,
+    GuiTaskResult,
     McpCodexAgentRoute,
     _agent_route_line,
+    build_agent_pending_message,
+    build_maintenance_pending_message,
+    worker_failure_result,
+    worker_success_result,
     _graph_item_label,
     _graph_status_text,
     build_local_graph_layout,
@@ -209,6 +214,42 @@ class DesktopGuiTests(unittest.TestCase):
     def test_agent_route_line_extracts_status_for_gui_label(self):
         self.assertEqual(_agent_route_line("answer\nagent route: mcp/codex\nstatus: ok"), "agent route: mcp/codex")
         self.assertEqual(_agent_route_line("answer only"), "agent route: 알 수 없음")
+
+    def test_agent_worker_pending_message_is_immediate_and_route_visible(self):
+        message = build_agent_pending_message()
+
+        self.assertIn("답변 생성 중", message)
+        self.assertIn("agent route: 실행 중", message)
+
+    def test_worker_success_result_preserves_agent_route_and_output(self):
+        result = worker_success_result("agent", "답변\n\nagent route: mcp/codex\nstatus: ok", refresh_pages=False)
+
+        self.assertIsInstance(result, GuiTaskResult)
+        self.assertTrue(result.ok)
+        self.assertEqual(result.route_line, "agent route: mcp/codex")
+        self.assertFalse(result.refresh_pages)
+        self.assertIn("status: ok", result.message)
+
+    def test_maintenance_worker_success_result_preserves_report_format(self):
+        report = "Maintenance Run Report\n상태: 성공"
+
+        result = worker_success_result("maintenance", report, refresh_pages=True)
+
+        self.assertTrue(result.ok)
+        self.assertTrue(result.refresh_pages)
+        self.assertIn("Maintenance Run Report", result.message)
+        self.assertIn("상태: 성공", result.message)
+
+    def test_worker_failure_result_is_user_visible(self):
+        result = worker_failure_result("maintenance", "maintenance 실행", RuntimeError("boom"))
+
+        self.assertFalse(result.ok)
+        self.assertFalse(result.refresh_pages)
+        self.assertIn("maintenance 실행 실패", result.message)
+        self.assertIn("boom", result.message)
+
+    def test_maintenance_pending_message_is_immediate(self):
+        self.assertIn("maintenance 실행 중", build_maintenance_pending_message())
 
     def test_presenter_reports_pending_sources_and_source_quality(self):
         adapter = FakeAdapter()
