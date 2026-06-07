@@ -2,6 +2,7 @@ from enum import IntFlag
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 from wiki_tool.desktop_gui import (
     GUI_ACTION_LABELS,
@@ -23,6 +24,7 @@ from wiki_tool.desktop_gui import (
     create_gui_user_domain,
     domain_controls_enabled,
     build_maintenance_task_specs,
+    open_domain_raw_folder,
     render_chat_messages_html,
     replace_chat_message,
     summarize_maintenance_status,
@@ -266,6 +268,45 @@ class DesktopGuiTests(unittest.TestCase):
         self.assertTrue(domain_controls_enabled(agent_running=False, maintenance_running=False))
         self.assertFalse(domain_controls_enabled(agent_running=True, maintenance_running=False))
         self.assertFalse(domain_controls_enabled(agent_running=False, maintenance_running=True))
+
+    def test_open_raw_folder_uses_current_domain_raw_dir(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            raw_dir = Path(tmp) / "raw"
+            raw_dir.mkdir()
+
+            calls = []
+            result = open_domain_raw_folder(SimpleNamespace(raw_dir=raw_dir), opener=lambda path: calls.append(path))
+
+        self.assertTrue(result.ok)
+        self.assertEqual(calls, [str(raw_dir)])
+        self.assertIn("raw 폴더를 열었습니다", result.message)
+
+    def test_open_raw_folder_reports_missing_directory_without_creating_it(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            raw_dir = Path(tmp) / "raw"
+
+            calls = []
+            result = open_domain_raw_folder(SimpleNamespace(raw_dir=raw_dir), opener=lambda path: calls.append(path))
+
+            self.assertFalse(raw_dir.exists())
+
+        self.assertFalse(result.ok)
+        self.assertEqual(calls, [])
+        self.assertIn("raw 폴더가 없습니다", result.message)
+
+    def test_open_raw_folder_does_not_modify_raw_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            raw_dir = Path(tmp) / "raw"
+            raw_dir.mkdir()
+            raw_file = raw_dir / "note.md"
+            raw_file.write_text("raw fixture", encoding="utf-8")
+            before = raw_file.read_text(encoding="utf-8")
+
+            result = open_domain_raw_folder(SimpleNamespace(raw_dir=raw_dir), opener=lambda _path: None)
+            after = raw_file.read_text(encoding="utf-8")
+
+        self.assertTrue(result.ok)
+        self.assertEqual(after, before)
 
     def test_page_navigation_groups_info_concepts_sources_and_logs_in_order(self):
         pages = [

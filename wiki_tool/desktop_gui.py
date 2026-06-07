@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import math
+import os
 import posixpath
 from dataclasses import dataclass
 from html import escape
@@ -103,6 +104,13 @@ class GuiDomainCreationResult:
     config: DomainConfig
     domain_file: Path
     message: str
+
+
+@dataclass(frozen=True)
+class RawFolderOpenResult:
+    ok: bool
+    message: str
+    path: Path
 
 
 class DirectAdapterAgentFallback:
@@ -458,6 +466,17 @@ def domain_controls_enabled(*, agent_running: bool, maintenance_running: bool) -
     return not agent_running and not maintenance_running
 
 
+def open_domain_raw_folder(config: DomainConfig, *, opener: Callable[[str], Any] | None = None) -> RawFolderOpenResult:
+    raw_dir = Path(config.raw_dir)
+    if not raw_dir.is_dir():
+        return RawFolderOpenResult(ok=False, message=f"raw 폴더가 없습니다: {raw_dir}", path=raw_dir)
+    open_folder = opener or getattr(os, "startfile", None)
+    if open_folder is None:
+        return RawFolderOpenResult(ok=False, message="이 환경에서는 raw 폴더를 열 수 없습니다.", path=raw_dir)
+    open_folder(str(raw_dir))
+    return RawFolderOpenResult(ok=True, message=f"raw 폴더를 열었습니다: {raw_dir}", path=raw_dir)
+
+
 def worker_success_result(kind: str, message: str, *, refresh_pages: bool, label: str = "작업") -> GuiTaskResult:
     return GuiTaskResult(kind=kind, ok=True, message=message, refresh_pages=refresh_pages, route_line=_agent_route_line(message) if kind == "agent" else None, label=label)
 
@@ -774,6 +793,9 @@ def _create_desktop_window(config: DomainConfig, deps: dict[str, Any]) -> Any:
             domain_row.addWidget(self.domain_switch_button)
             domain_row.addWidget(self.new_domain_button)
             layout.addLayout(domain_row)
+            self.raw_folder_button = QPushButton("raw 폴더 열기")
+            self.raw_folder_button.clicked.connect(self._open_raw_folder)
+            layout.addWidget(self.raw_folder_button)
 
             self.search_input = QLineEdit()
             self.search_input.setPlaceholderText("문서 검색")
@@ -940,6 +962,12 @@ def _create_desktop_window(config: DomainConfig, deps: dict[str, Any]) -> Any:
         def _show_domain_error(self, message: str) -> None:
             self._set_status_text(message)
             QMessageBox.warning(self, "도메인 생성 실패", message)
+
+        def _open_raw_folder(self) -> None:
+            result = open_domain_raw_folder(self.config)
+            self._set_status_text(result.message)
+            if not result.ok:
+                QMessageBox.warning(self, "raw 폴더 열기 실패", result.message)
 
         def _apply_domain_config(self, config: DomainConfig, *, status_message: str | None = None) -> None:
             runtime = build_domain_runtime(config)
