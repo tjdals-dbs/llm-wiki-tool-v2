@@ -43,6 +43,7 @@ from wiki_tool.desktop_gui import (
     build_local_graph_layout,
     resolve_wiki_link,
 )
+from wiki_tool.desktop_styles import configure_status_bar, configure_status_label, set_elided_status_text
 from wiki_tool.user_domain import create_user_domain
 
 
@@ -150,6 +151,82 @@ class FakeAdapter:
         }
 
 
+class FakeStatusFontMetrics:
+    def elidedText(self, text, _mode, width):  # noqa: N802 - Qt-compatible test double
+        char_width = 8
+        if width <= 0 or len(text) * char_width <= width:
+            return text
+        visible_chars = max(1, width // char_width - 3)
+        return text[:visible_chars] + "..."
+
+    def height(self):
+        return 14
+
+
+class FakeStatusLabel:
+    def __init__(self, width=160):
+        self._width = width
+        self._text = ""
+        self._tooltip = ""
+        self._properties = {}
+        self._word_wrap = None
+        self._min_height = None
+        self._max_height = None
+        self._metrics = FakeStatusFontMetrics()
+
+    def width(self):
+        return self._width
+
+    def fontMetrics(self):  # noqa: N802 - Qt-compatible test double
+        return self._metrics
+
+    def setText(self, text):  # noqa: N802 - Qt-compatible test double
+        self._text = text
+
+    def text(self):
+        return self._text
+
+    def setToolTip(self, tooltip):  # noqa: N802 - Qt-compatible test double
+        self._tooltip = tooltip
+
+    def toolTip(self):  # noqa: N802 - Qt-compatible test double
+        return self._tooltip
+
+    def setProperty(self, key, value):  # noqa: N802 - Qt-compatible test double
+        self._properties[key] = value
+
+    def property(self, key):
+        return self._properties.get(key)
+
+    def setWordWrap(self, value):  # noqa: N802 - Qt-compatible test double
+        self._word_wrap = value
+
+    def setMinimumHeight(self, value):  # noqa: N802 - Qt-compatible test double
+        self._min_height = value
+
+    def setMaximumHeight(self, value):  # noqa: N802 - Qt-compatible test double
+        self._max_height = value
+
+
+class FakeStatusBar:
+    def __init__(self):
+        self._tooltip = ""
+        self._min_height = None
+        self._max_height = None
+
+    def setToolTip(self, tooltip):  # noqa: N802 - Qt-compatible test double
+        self._tooltip = tooltip
+
+    def toolTip(self):  # noqa: N802 - Qt-compatible test double
+        return self._tooltip
+
+    def setMinimumHeight(self, value):  # noqa: N802 - Qt-compatible test double
+        self._min_height = value
+
+    def setMaximumHeight(self, value):  # noqa: N802 - Qt-compatible test double
+        self._max_height = value
+
+
 class FakeDomainAdapter(FakeAdapter):
     def __init__(self, config):
         super().__init__()
@@ -208,6 +285,101 @@ class FakeItemFlag(IntFlag):
     ItemIsDropEnabled = 8
     ItemIsUserCheckable = 16
     ItemIsEnabled = 32
+
+
+class DesktopStatusLabelTests(unittest.TestCase):
+    def test_long_status_text_is_elided_and_preserves_full_tooltip(self):
+        label = FakeStatusLabel(width=96)
+        message = "pending concept 조직 실행 중... concept 후보가 많으면 오래 걸릴 수 있습니다."
+
+        set_elided_status_text(label, message)
+
+        self.assertEqual(label.toolTip(), message)
+        self.assertEqual(label.property("fullStatusText"), message)
+        self.assertLess(len(label.text()), len(message))
+        self.assertTrue(label.text().endswith("..."))
+        self.assertTrue(label.text().startswith("pending"))
+
+    def test_short_status_text_is_not_elided(self):
+        label = FakeStatusLabel(width=240)
+        message = "wiki lint 통과"
+
+        set_elided_status_text(label, message)
+
+        self.assertEqual(label.text(), message)
+        self.assertEqual(label.toolTip(), message)
+
+    def test_status_text_elision_handles_tiny_width(self):
+        label = FakeStatusLabel(width=1)
+        message = "아주 긴 상태 메시지"
+
+        set_elided_status_text(label, message, available_width=1)
+
+        self.assertEqual(label.toolTip(), message)
+        self.assertTrue(label.text())
+
+    def test_status_label_is_configured_as_single_line_stable_height(self):
+        label = FakeStatusLabel()
+
+        configure_status_label(label)
+
+        self.assertFalse(label._word_wrap)
+        self.assertIsNotNone(label._min_height)
+        self.assertEqual(label._min_height, label._max_height)
+
+    def test_status_bar_is_configured_with_stable_hover_area_height(self):
+        status_bar = FakeStatusBar()
+
+        configure_status_bar(status_bar)
+
+        self.assertEqual(status_bar._min_height, 28)
+        self.assertEqual(status_bar._max_height, 28)
+
+    def test_status_text_can_be_reelided_from_stored_full_message(self):
+        label = FakeStatusLabel(width=240)
+        message = "source summary fallback 1개: Codex draft schema 검증 실패로 rule-based 요약 사용"
+        set_elided_status_text(label, message)
+        full_message = label.property("fullStatusText")
+        label._width = 80
+
+        set_elided_status_text(label, full_message)
+
+        self.assertEqual(label.toolTip(), message)
+        self.assertLess(len(label.text()), len(message))
+
+    def test_status_text_tooltip_is_applied_to_label_and_status_bar(self):
+        label = FakeStatusLabel(width=128)
+        status_bar = FakeStatusBar()
+        message = "Maintenance Run Report\n상태: fallback 포함 성공\tCodex fallback 1개\nlint 통과"
+
+        set_elided_status_text(label, message, tooltip_targets=(status_bar,))
+
+        self.assertEqual(label.toolTip(), message)
+        self.assertEqual(status_bar.toolTip(), message)
+        self.assertNotIn("\n", label.text())
+        self.assertTrue(label.text().endswith("..."))
+
+    def test_multiline_status_text_is_flattened_but_tooltip_preserves_original(self):
+        label = FakeStatusLabel(width=128)
+        message = "Maintenance Run Report\n상태: fallback 포함 성공\tCodex fallback 1개\nlint 통과"
+
+        set_elided_status_text(label, message)
+
+        self.assertEqual(label.toolTip(), message)
+        self.assertEqual(label.property("fullStatusText"), message)
+        self.assertNotIn("\n", label.text())
+        self.assertNotIn("\t", label.text())
+        self.assertLess(len(label.text()), len(message))
+        self.assertTrue(label.text().endswith("..."))
+
+    def test_short_multiline_status_text_is_flattened_without_elision(self):
+        label = FakeStatusLabel(width=240)
+        message = "wiki lint\n통과"
+
+        set_elided_status_text(label, message)
+
+        self.assertEqual(label.toolTip(), message)
+        self.assertEqual(label.text(), "wiki lint 통과")
 
 
 class DesktopGuiTests(unittest.TestCase):

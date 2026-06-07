@@ -59,6 +59,9 @@ from .desktop_styles import (
     GUI_PANEL_TITLES,
     GUI_PANEL_WEIGHTS,
     GUI_STYLE_COLORS,
+    configure_status_bar,
+    configure_status_label,
+    set_elided_status_text,
     stylesheet as _stylesheet,
 )
 from .mcp_tools import WikiToolAdapter
@@ -330,12 +333,18 @@ def _create_desktop_window(config: DomainConfig, deps: dict[str, Any]) -> Any:
             self._pending_agent_message_index: int | None = None
             self._agent_running = False
             self._maintenance_running = False
+            self._full_status_message = "준비됨"
             self.maintenance_buttons: list[Any] = []
             self.setWindowTitle("LLM Wiki Tool v2")
             self.resize(1440, 840)
             self._build_layout()
             self.refresh_domain_options()
             self.refresh_pages()
+
+        def resizeEvent(self, event: Any) -> None:  # noqa: N802 - Qt API name
+            super().resizeEvent(event)
+            if hasattr(self, "status_label"):
+                self._refresh_status_text_elision()
 
         def _build_layout(self) -> None:
             splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -484,10 +493,18 @@ def _create_desktop_window(config: DomainConfig, deps: dict[str, Any]) -> Any:
             ask_row.addWidget(self.ask_button)
             layout.addLayout(ask_row)
 
+            self.status_bar = QFrame()
+            self.status_bar.setObjectName("StatusBar")
+            configure_status_bar(self.status_bar)
+            status_layout = QHBoxLayout(self.status_bar)
+            status_layout.setContentsMargins(8, 0, 8, 0)
+            status_layout.setSpacing(0)
             self.status_label = QLabel("준비됨")
             self.status_label.setObjectName("StatusLabel")
-            self.status_label.setWordWrap(True)
-            layout.addWidget(self.status_label)
+            configure_status_label(self.status_label)
+            status_layout.addWidget(self.status_label, stretch=1)
+            self._refresh_status_text_elision()
+            layout.addWidget(self.status_bar)
             return panel
 
         def refresh_pages(self) -> None:
@@ -772,7 +789,12 @@ def _create_desktop_window(config: DomainConfig, deps: dict[str, Any]) -> Any:
             self.new_domain_button.setEnabled(enabled)
 
         def _set_status_text(self, message: str) -> None:
-            self.status_label.setText(message)
+            self._full_status_message = str(message or "")
+            self._refresh_status_text_elision()
+
+        def _refresh_status_text_elision(self) -> None:
+            tooltip_targets = (self.status_bar,) if hasattr(self, "status_bar") else ()
+            set_elided_status_text(self.status_label, self._full_status_message, tooltip_targets=tooltip_targets)
 
         def _render_chat_log(self) -> None:
             self.chat_log.setHtml(render_chat_messages_html(self._chat_messages))

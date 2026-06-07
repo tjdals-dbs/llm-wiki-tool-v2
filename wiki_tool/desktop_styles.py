@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 
 GUI_PANEL_TITLES = ["위키 라이브러리", "문서와 Graphify", "Wiki Agent"]
 GUI_ACTION_LABELS = ["raw 스캔", "새 source 요약", "pending concept 조직", "wiki lint", "maintenance 실행", "에이전트에게 질문"]
@@ -25,6 +27,71 @@ GUI_STYLE_COLORS = {
     "accent": "#4e7fd8",
     "accent_soft": "#dbe7ff",
 }
+
+
+def configure_status_bar(status_bar: object, *, height: int = 28) -> None:
+    status_bar.setMinimumHeight(height)
+    status_bar.setMaximumHeight(height)
+
+
+def configure_status_label(label: object, *, height: int | None = None) -> None:
+    label.setWordWrap(False)
+    metrics = label.fontMetrics()
+    stable_height = height or max(18, metrics.height() + 6)
+    label.setMinimumHeight(stable_height)
+    label.setMaximumHeight(stable_height)
+
+
+def set_elided_status_text(
+    label: object,
+    message: str,
+    *,
+    available_width: int | None = None,
+    fallback_width: int = 320,
+    min_elide_width: int = 80,
+    tooltip_targets: tuple[object, ...] = (),
+) -> str:
+    full_message = str(message or "")
+    label.setToolTip(full_message)
+    for target in tooltip_targets:
+        target.setToolTip(full_message)
+    label.setProperty("fullStatusText", full_message)
+    display_message = _single_line_status_text(full_message)
+    width = _status_label_width(label, available_width)
+    if width < min_elide_width:
+        width = fallback_width
+    visible_text = label.fontMetrics().elidedText(display_message, _elide_right_mode(), width)
+    label.setText(visible_text)
+    return visible_text
+
+
+def _single_line_status_text(message: str) -> str:
+    return re.sub(r"\s+", " ", message.replace("\r", " ").replace("\n", " ").replace("\t", " ")).strip()
+
+
+def _status_label_width(label: object, available_width: int | None) -> int:
+    if available_width is not None:
+        return max(0, int(available_width))
+    try:
+        contents_rect = label.contentsRect()
+        width = contents_rect.width()
+        if width > 0:
+            return width
+    except AttributeError:
+        pass
+    try:
+        return max(0, int(label.width()))
+    except AttributeError:
+        return 0
+
+
+def _elide_right_mode() -> object:
+    try:
+        from PySide6.QtCore import Qt
+
+        return Qt.TextElideMode.ElideRight
+    except Exception:
+        return 0
 
 
 def stylesheet() -> str:
@@ -128,7 +195,12 @@ def stylesheet() -> str:
     QLabel#StatusLabel {{
         color: {GUI_STYLE_COLORS["muted"]};
         font-size: 11px;
-        padding: 2px 2px 0 2px;
+        padding: 0 2px;
+    }}
+    QFrame#StatusBar {{
+        background: #eef1f6;
+        border: 1px solid {GUI_STYLE_COLORS["border"]};
+        border-radius: 7px;
     }}
     QFrame#MaintenanceBox {{
         background: #edf1f7;
