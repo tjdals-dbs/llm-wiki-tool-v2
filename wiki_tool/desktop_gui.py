@@ -13,7 +13,7 @@ from .agent_provider import PROVIDER_CODEX, load_agent_provider_config
 from .config import DomainConfig, load_domain_config
 from .mcp_registry import create_tool_registry
 from .mcp_tools import WikiToolAdapter
-from .user_domain import discover_domain_files, domain_display_name
+from .user_domain import UserDomainInitError, UserDomainInitResult, create_user_domain, discover_domain_files, domain_display_name
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -88,6 +88,21 @@ class DomainRuntime:
     adapter: Any
     presenter: "DesktopGuiPresenter"
     maintenance_task_specs: dict[str, GuiTaskSpec]
+
+
+@dataclass(frozen=True)
+class DomainCreationRequest:
+    name: str
+    slug: str
+    description: str = ""
+    disclaimer: str = ""
+
+
+@dataclass(frozen=True)
+class GuiDomainCreationResult:
+    config: DomainConfig
+    domain_file: Path
+    message: str
 
 
 class DirectAdapterAgentFallback:
@@ -418,6 +433,31 @@ def build_domain_runtime(config: DomainConfig, *, adapter_factory: Callable[[Dom
     )
 
 
+def create_gui_user_domain(
+    project_root: Path,
+    request: DomainCreationRequest,
+    *,
+    creator: Callable[..., UserDomainInitResult] = create_user_domain,
+) -> GuiDomainCreationResult:
+    result = creator(
+        project_root=project_root,
+        slug=request.slug,
+        name=request.name,
+        description=request.description or None,
+        disclaimer=request.disclaimer or None,
+    )
+    config = load_domain_config(result.domain_file)
+    return GuiDomainCreationResult(
+        config=config,
+        domain_file=result.domain_file,
+        message=f"도메인 생성 완료: {config.name} ({config.slug})",
+    )
+
+
+def domain_controls_enabled(*, agent_running: bool, maintenance_running: bool) -> bool:
+    return not agent_running and not maintenance_running
+
+
 def worker_success_result(kind: str, message: str, *, refresh_pages: bool, label: str = "작업") -> GuiTaskResult:
     return GuiTaskResult(kind=kind, ok=True, message=message, refresh_pages=refresh_pages, route_line=_agent_route_line(message) if kind == "agent" else None, label=label)
 
@@ -435,6 +475,9 @@ def _load_pyside6() -> dict[str, Any]:
         from PySide6.QtWidgets import (
             QApplication,
             QComboBox,
+            QDialog,
+            QDialogButtonBox,
+            QFormLayout,
             QFrame,
             QHBoxLayout,
             QLabel,
@@ -442,6 +485,7 @@ def _load_pyside6() -> dict[str, Any]:
             QListWidget,
             QListWidgetItem,
             QMainWindow,
+            QMessageBox,
             QPushButton,
             QSizePolicy,
             QSplitter,
@@ -461,6 +505,9 @@ def _create_desktop_window(config: DomainConfig, deps: dict[str, Any]) -> Any:
     QDesktopServices = deps["QDesktopServices"]
     QFont = deps["QFont"]
     QComboBox = deps["QComboBox"]
+    QDialog = deps["QDialog"]
+    QDialogButtonBox = deps["QDialogButtonBox"]
+    QFormLayout = deps["QFormLayout"]
     QFrame = deps["QFrame"]
     QHBoxLayout = deps["QHBoxLayout"]
     QLabel = deps["QLabel"]
@@ -468,6 +515,7 @@ def _create_desktop_window(config: DomainConfig, deps: dict[str, Any]) -> Any:
     QListWidget = deps["QListWidget"]
     QListWidgetItem = deps["QListWidgetItem"]
     QMainWindow = deps["QMainWindow"]
+    QMessageBox = deps["QMessageBox"]
     QIcon = deps["QIcon"]
     QObject = deps["QObject"]
     QPointF = deps["QPointF"]
@@ -632,6 +680,39 @@ def _create_desktop_window(config: DomainConfig, deps: dict[str, Any]) -> Any:
         painter.end()
         return QIcon(pixmap)
 
+    class NewDomainDialog(QDialog):
+        def __init__(self, parent: Any = None) -> None:
+            super().__init__(parent)
+            self.setWindowTitle("새 도메인")
+            self.setModal(True)
+            layout = QVBoxLayout(self)
+            form = QFormLayout()
+            self.name_input = QLineEdit()
+            self.name_input.setPlaceholderText("예: 내 금융 위키")
+            self.slug_input = QLineEdit()
+            self.slug_input.setPlaceholderText("예: finance-private")
+            self.description_input = QLineEdit()
+            self.description_input.setPlaceholderText("선택: 도메인 설명")
+            self.disclaimer_input = QLineEdit()
+            self.disclaimer_input.setPlaceholderText("선택: 안내 문구")
+            form.addRow("도메인 이름", self.name_input)
+            form.addRow("slug", self.slug_input)
+            form.addRow("설명", self.description_input)
+            form.addRow("안내 문구", self.disclaimer_input)
+            layout.addLayout(form)
+            buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+            buttons.accepted.connect(self.accept)
+            buttons.rejected.connect(self.reject)
+            layout.addWidget(buttons)
+
+        def request(self) -> DomainCreationRequest:
+            return DomainCreationRequest(
+                name=self.name_input.text().strip(),
+                slug=self.slug_input.text().strip(),
+                description=self.description_input.text().strip(),
+                disclaimer=self.disclaimer_input.text().strip(),
+            )
+
     class WikiDesktopWindow(QMainWindow):
         def __init__(self, domain_config: DomainConfig) -> None:
             super().__init__()
@@ -687,8 +768,11 @@ def _create_desktop_window(config: DomainConfig, deps: dict[str, Any]) -> Any:
             self.domain_refresh_button.clicked.connect(self.refresh_domain_options)
             self.domain_switch_button = QPushButton("도메인 전환")
             self.domain_switch_button.clicked.connect(self._switch_selected_domain)
+            self.new_domain_button = QPushButton("새 도메인")
+            self.new_domain_button.clicked.connect(self._open_new_domain_dialog)
             domain_row.addWidget(self.domain_refresh_button)
             domain_row.addWidget(self.domain_switch_button)
+            domain_row.addWidget(self.new_domain_button)
             layout.addLayout(domain_row)
 
             self.search_input = QLineEdit()
@@ -836,7 +920,28 @@ def _create_desktop_window(config: DomainConfig, deps: dict[str, Any]) -> Any:
             except Exception as exc:
                 self._set_status_text(f"도메인 전환 실패: {exc}")
 
-        def _apply_domain_config(self, config: DomainConfig) -> None:
+        def _open_new_domain_dialog(self) -> None:
+            if self._agent_running or self._maintenance_running:
+                self._set_status_text("작업 중에는 새 도메인을 만들 수 없습니다.")
+                return
+            dialog = NewDomainDialog(self)
+            if dialog.exec() != QDialog.DialogCode.Accepted:
+                return
+            try:
+                result = create_gui_user_domain(PROJECT_ROOT, dialog.request())
+            except UserDomainInitError as exc:
+                self._show_domain_error(str(exc))
+                return
+            except Exception as exc:
+                self._show_domain_error(f"도메인 생성 실패: {exc}")
+                return
+            self._apply_domain_config(result.config, status_message=result.message)
+
+        def _show_domain_error(self, message: str) -> None:
+            self._set_status_text(message)
+            QMessageBox.warning(self, "도메인 생성 실패", message)
+
+        def _apply_domain_config(self, config: DomainConfig, *, status_message: str | None = None) -> None:
             runtime = build_domain_runtime(config)
             self.config = runtime.config
             self.adapter = runtime.adapter
@@ -849,7 +954,7 @@ def _create_desktop_window(config: DomainConfig, deps: dict[str, Any]) -> Any:
             self._pending_agent_message_index = None
             self.search_input.clear()
             self.route_label.setText("agent route: 준비됨")
-            self._set_status_text(f"도메인 전환 완료: {config.name} ({config.slug})")
+            self._set_status_text(status_message or f"도메인 전환 완료: {config.name} ({config.slug})")
             self._render_chat_log()
             self.refresh_domain_options()
             self.refresh_pages()
@@ -1028,10 +1133,11 @@ def _create_desktop_window(config: DomainConfig, deps: dict[str, Any]) -> Any:
                 button.setEnabled(enabled)
 
         def _update_domain_controls_enabled(self) -> None:
-            enabled = not self._agent_running and not self._maintenance_running
+            enabled = domain_controls_enabled(agent_running=self._agent_running, maintenance_running=self._maintenance_running)
             self.domain_combo.setEnabled(enabled)
             self.domain_refresh_button.setEnabled(enabled)
             self.domain_switch_button.setEnabled(enabled)
+            self.new_domain_button.setEnabled(enabled)
 
         def _set_status_text(self, message: str) -> None:
             self.status_label.setText(message)

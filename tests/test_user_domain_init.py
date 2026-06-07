@@ -61,6 +61,19 @@ class UserDomainInitTests(unittest.TestCase):
             with self.assertRaises(UserDomainInitError):
                 create_user_domain(project_root=root, slug="finance-private", name="다른 이름")
 
+    def test_optional_disclaimer_is_written_to_domain_yml(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            result = create_user_domain(
+                project_root=Path(tmp),
+                slug="study-notes",
+                name="학습 노트",
+                disclaimer="개인 학습용입니다.",
+            )
+
+            domain_yml = result.domain_file.read_text(encoding="utf-8")
+
+        self.assertIn("disclaimer: 개인 학습용입니다.", domain_yml)
+
     def test_invalid_slug_and_path_traversal_are_rejected(self):
         invalid_slugs = ["Finance", "finance private", "../escape", "finance/private", "한글", ".hidden"]
 

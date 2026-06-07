@@ -12,6 +12,7 @@ from wiki_tool.desktop_gui import (
     AgentRouteResult,
     DesktopGuiPresenter,
     DirectAdapterAgentFallback,
+    DomainCreationRequest,
     GuiTaskSpec,
     GuiTaskResult,
     McpCodexAgentRoute,
@@ -19,6 +20,8 @@ from wiki_tool.desktop_gui import (
     append_agent_exchange,
     build_agent_pending_message,
     build_maintenance_pending_message,
+    create_gui_user_domain,
+    domain_controls_enabled,
     build_maintenance_task_specs,
     render_chat_messages_html,
     replace_chat_message,
@@ -33,6 +36,7 @@ from wiki_tool.desktop_gui import (
     build_local_graph_layout,
     resolve_wiki_link,
 )
+from wiki_tool.user_domain import create_user_domain
 
 
 class FakeAdapter:
@@ -227,6 +231,41 @@ class DesktopGuiTests(unittest.TestCase):
         self.assertIs(runtime.presenter.adapter, runtime.adapter)
         self.assertIs(runtime.maintenance_task_specs["scan"].task.__self__, runtime.presenter)
         self.assertEqual(runtime.maintenance_task_specs["scan"].task.__name__, "scan_raw_sources")
+
+    def test_gui_domain_creation_reuses_user_domain_initializer_and_loads_config(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            calls = []
+
+            def recording_creator(**kwargs):
+                calls.append(kwargs)
+                return create_user_domain(**kwargs)
+
+            result = create_gui_user_domain(
+                Path(tmp),
+                DomainCreationRequest(
+                    name="내 금융 위키",
+                    slug="finance-private",
+                    description="개인 금융 메모",
+                    disclaimer="개인 학습용",
+                ),
+                creator=recording_creator,
+            )
+
+            self.assertTrue((Path(tmp) / "user_domains" / "finance-private" / "domain.yml").is_file())
+
+        self.assertEqual(calls[0]["project_root"], Path(tmp))
+        self.assertEqual(calls[0]["slug"], "finance-private")
+        self.assertEqual(calls[0]["name"], "내 금융 위키")
+        self.assertEqual(calls[0]["description"], "개인 금융 메모")
+        self.assertEqual(calls[0]["disclaimer"], "개인 학습용")
+        self.assertEqual(result.config.slug, "finance-private")
+        self.assertEqual(result.config.disclaimer, "개인 학습용")
+        self.assertIn("도메인 생성 완료", result.message)
+
+    def test_domain_controls_are_disabled_during_agent_or_maintenance_work(self):
+        self.assertTrue(domain_controls_enabled(agent_running=False, maintenance_running=False))
+        self.assertFalse(domain_controls_enabled(agent_running=True, maintenance_running=False))
+        self.assertFalse(domain_controls_enabled(agent_running=False, maintenance_running=True))
 
     def test_page_navigation_groups_info_concepts_sources_and_logs_in_order(self):
         pages = [

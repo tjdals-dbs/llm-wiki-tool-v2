@@ -36,6 +36,7 @@ def create_user_domain(
     slug: str,
     name: str,
     description: str | None = None,
+    disclaimer: str | None = None,
     language: str = "ko",
 ) -> UserDomainInitResult:
     clean_slug = slug.strip()
@@ -62,19 +63,21 @@ def create_user_domain(
 
     domain_file = domain_dir / "domain.yml"
     domain_description = description.strip() if description and description.strip() else f"Local user domain for {clean_name}."
+    domain_disclaimer = disclaimer.strip() if disclaimer and disclaimer.strip() else ""
+    domain_lines = [
+        f"name: {clean_name}",
+        f"slug: {clean_slug}",
+        f"description: {domain_description}",
+        "raw_dir: raw",
+        "wiki_dir: wiki",
+        "manifest: manifests/raw_sources.csv",
+        f"language: {language}",
+    ]
+    if domain_disclaimer:
+        domain_lines.append(f"disclaimer: {domain_disclaimer}")
+    domain_lines.append("")
     domain_file.write_text(
-        "\n".join(
-            [
-                f"name: {clean_name}",
-                f"slug: {clean_slug}",
-                f"description: {domain_description}",
-                "raw_dir: raw",
-                "wiki_dir: wiki",
-                "manifest: manifests/raw_sources.csv",
-                f"language: {language}",
-                "",
-            ]
-        ),
+        "\n".join(domain_lines),
         encoding="utf-8",
     )
 
