@@ -159,4 +159,14 @@ python scripts\smoke_codex_provider.py --domain examples\finance\domain.yml --qu
 
 `examples/`는 public sample과 테스트 fixture용입니다. 실제 사용자는 `user_domains/<slug>/` 아래에 자기 도메인을 만들고 `domain.yml`, `raw/`, `manifests/`, `wiki/`를 둡니다.
 
-`user_domains/<slug>/` 아래의 개인 raw 자료와 생성 산출물은 local runtime data로 취급되며 Git에 올라가지 않도록 ignore됩니다. 현재 단계에서는 이 구조를 수동으로 만들 수 있고, 다음 단계에서 init script가 자동 생성을 담당할 예정입니다.
+`user_domains/<slug>/` 아래의 개인 raw 자료와 생성 산출물은 local runtime data로 취급되며 Git에 올라가지 않도록 ignore됩니다. 새 도메인은 다음 명령으로 만들 수 있습니다.
+
+```powershell
+python scripts\init_user_domain.py --slug finance-private --name "내 금융 위키"
+```
+
+생성 후 desktop GUI는 다음처럼 실행합니다.
+
+```powershell
+python scripts\run_desktop_gui.py --domain user_domains\finance-private\domain.yml
+```
