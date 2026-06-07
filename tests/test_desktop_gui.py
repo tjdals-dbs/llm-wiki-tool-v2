@@ -23,8 +23,13 @@ from wiki_tool.desktop_gui import (
     build_maintenance_pending_message,
     create_gui_user_domain,
     domain_controls_enabled,
+    advanced_maintenance_default_visible,
+    advanced_maintenance_toggle_label,
     build_maintenance_task_specs,
+    maintenance_controls_enabled,
     open_domain_raw_folder,
+    primary_maintenance_task_spec,
+    toggle_advanced_maintenance_visible,
     render_chat_messages_html,
     replace_chat_message,
     summarize_maintenance_status,
@@ -529,6 +534,33 @@ class DesktopGuiTests(unittest.TestCase):
         self.assertTrue(organize.refresh_pages)
         self.assertEqual(organize.task(), "concept 조직 완료")
         self.assertEqual(presenter.calls, ["organize"])
+
+    def test_primary_wiki_update_button_uses_existing_maintenance_task(self):
+        presenter = FakePresenter()
+        specs = build_maintenance_task_specs(presenter)
+
+        primary = primary_maintenance_task_spec(specs)
+
+        self.assertEqual(primary.key, "maintenance")
+        self.assertEqual(primary.task.__self__, presenter)
+        self.assertEqual(primary.task.__name__, "run_maintenance_workflow")
+        self.assertTrue(primary.refresh_pages)
+
+    def test_advanced_maintenance_area_is_collapsed_by_default_and_toggles(self):
+        self.assertFalse(advanced_maintenance_default_visible())
+        self.assertTrue(toggle_advanced_maintenance_visible(False))
+        self.assertFalse(toggle_advanced_maintenance_visible(True))
+        self.assertEqual(advanced_maintenance_toggle_label(False), "고급 관리 펼치기")
+        self.assertEqual(advanced_maintenance_toggle_label(True), "고급 관리 접기")
+
+    def test_existing_detail_maintenance_task_specs_are_preserved(self):
+        specs = build_maintenance_task_specs(FakePresenter())
+
+        self.assertEqual(list(specs), ["scan", "summarize", "organize", "lint", "maintenance", "status"])
+
+    def test_maintenance_controls_disable_during_maintenance_run(self):
+        self.assertTrue(maintenance_controls_enabled(maintenance_running=False))
+        self.assertFalse(maintenance_controls_enabled(maintenance_running=True))
 
     def test_maintenance_task_specs_mark_refresh_requirements(self):
         specs = build_maintenance_task_specs(FakePresenter())

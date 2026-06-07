@@ -49,6 +49,8 @@ PAGE_NAVIGATION_GROUPS = [
     ("log", "Logs", {"shape": "circle", "color": "#8b95a5"}),
 ]
 PAGE_NAVIGATION_CHILD_INDENT = "    "
+PRIMARY_MAINTENANCE_TASK_KEY = "maintenance"
+ADVANCED_MAINTENANCE_DEFAULT_VISIBLE = False
 
 
 @dataclass(frozen=True)
@@ -425,6 +427,26 @@ def build_maintenance_task_specs(presenter: Any) -> dict[str, GuiTaskSpec]:
             refresh_pages=False,
         ),
     }
+
+
+def primary_maintenance_task_spec(task_specs: dict[str, GuiTaskSpec]) -> GuiTaskSpec:
+    return task_specs[PRIMARY_MAINTENANCE_TASK_KEY]
+
+
+def advanced_maintenance_default_visible() -> bool:
+    return ADVANCED_MAINTENANCE_DEFAULT_VISIBLE
+
+
+def toggle_advanced_maintenance_visible(current_visible: bool) -> bool:
+    return not current_visible
+
+
+def advanced_maintenance_toggle_label(visible: bool) -> str:
+    return "고급 관리 접기" if visible else "고급 관리 펼치기"
+
+
+def maintenance_controls_enabled(*, maintenance_running: bool) -> bool:
+    return not maintenance_running
 
 
 def build_domain_runtime(config: DomainConfig, *, adapter_factory: Callable[[DomainConfig], Any] = WikiToolAdapter) -> DomainRuntime:
@@ -855,6 +877,22 @@ def _create_desktop_window(config: DomainConfig, deps: dict[str, Any]) -> Any:
             maintenance_layout = QVBoxLayout(maintenance)
             maintenance_layout.setContentsMargins(10, 10, 10, 10)
             maintenance_layout.setSpacing(6)
+            self.update_wiki_button = QPushButton("위키 업데이트")
+            self.update_wiki_button.setObjectName("PrimaryButton")
+            self.update_wiki_button.clicked.connect(lambda: self._run_maintenance_task(PRIMARY_MAINTENANCE_TASK_KEY))
+            self.maintenance_buttons.append(self.update_wiki_button)
+            maintenance_layout.addWidget(self.update_wiki_button)
+
+            self.advanced_maintenance_toggle = QPushButton(advanced_maintenance_toggle_label(advanced_maintenance_default_visible()))
+            self.advanced_maintenance_toggle.clicked.connect(self._toggle_advanced_maintenance)
+            self.maintenance_buttons.append(self.advanced_maintenance_toggle)
+            maintenance_layout.addWidget(self.advanced_maintenance_toggle)
+
+            self.advanced_maintenance_box = QFrame()
+            self.advanced_maintenance_box.setVisible(advanced_maintenance_default_visible())
+            advanced_layout = QVBoxLayout(self.advanced_maintenance_box)
+            advanced_layout.setContentsMargins(0, 4, 0, 0)
+            advanced_layout.setSpacing(6)
             for label, command in [
                 ("raw 스캔", self._scan),
                 ("새 source 요약", self._summarize),
@@ -866,7 +904,8 @@ def _create_desktop_window(config: DomainConfig, deps: dict[str, Any]) -> Any:
                 button = QPushButton(label)
                 button.clicked.connect(command)
                 self.maintenance_buttons.append(button)
-                maintenance_layout.addWidget(button)
+                advanced_layout.addWidget(button)
+            maintenance_layout.addWidget(self.advanced_maintenance_box)
             layout.addWidget(maintenance)
 
             self.chat_log = QTextBrowser()
@@ -1085,6 +1124,11 @@ def _create_desktop_window(config: DomainConfig, deps: dict[str, Any]) -> Any:
                 refresh_pages=spec.refresh_pages,
             )
 
+        def _toggle_advanced_maintenance(self) -> None:
+            visible = toggle_advanced_maintenance_visible(self.advanced_maintenance_box.isVisible())
+            self.advanced_maintenance_box.setVisible(visible)
+            self.advanced_maintenance_toggle.setText(advanced_maintenance_toggle_label(visible))
+
         def _ask(self) -> None:
             if self._agent_running:
                 return
@@ -1157,6 +1201,7 @@ def _create_desktop_window(config: DomainConfig, deps: dict[str, Any]) -> Any:
             self.ask_button.setEnabled(enabled)
 
         def _set_maintenance_enabled(self, enabled: bool) -> None:
+            enabled = enabled and maintenance_controls_enabled(maintenance_running=self._maintenance_running)
             for button in self.maintenance_buttons:
                 button.setEnabled(enabled)
 
