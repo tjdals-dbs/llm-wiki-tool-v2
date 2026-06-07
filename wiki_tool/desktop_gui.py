@@ -39,6 +39,13 @@ GUI_STYLE_COLORS = {
     "accent": "#4e7fd8",
     "accent_soft": "#dbe7ff",
 }
+PAGE_NAVIGATION_GROUPS = [
+    ("info", "Wiki Info", {"shape": "hexagon", "color": "#8b95a5"}),
+    ("concept", "Concepts", {"shape": "circle", "color": "#4fb277"}),
+    ("source", "Sources", {"shape": "square", "color": "#4e7fd8"}),
+    ("log", "Logs", {"shape": "circle", "color": "#8b95a5"}),
+]
+PAGE_NAVIGATION_CHILD_INDENT = "    "
 
 
 @dataclass(frozen=True)
@@ -400,7 +407,7 @@ def worker_failure_result(kind: str, label: str, error: BaseException, *, refres
 def _load_pyside6() -> dict[str, Any]:
     try:
         from PySide6.QtCore import QObject, QPointF, Qt, QThread, QUrl, Signal
-        from PySide6.QtGui import QColor, QDesktopServices, QFont, QPainter, QPen, QPolygonF
+        from PySide6.QtGui import QColor, QDesktopServices, QFont, QIcon, QPainter, QPen, QPixmap, QPolygonF
         from PySide6.QtWidgets import (
             QApplication,
             QFrame,
@@ -435,10 +442,12 @@ def _create_desktop_window(config: DomainConfig, deps: dict[str, Any]) -> Any:
     QListWidget = deps["QListWidget"]
     QListWidgetItem = deps["QListWidgetItem"]
     QMainWindow = deps["QMainWindow"]
+    QIcon = deps["QIcon"]
     QObject = deps["QObject"]
     QPointF = deps["QPointF"]
     QPainter = deps["QPainter"]
     QPen = deps["QPen"]
+    QPixmap = deps["QPixmap"]
     QPolygonF = deps["QPolygonF"]
     QPushButton = deps["QPushButton"]
     QSizePolicy = deps["QSizePolicy"]
@@ -567,6 +576,35 @@ def _create_desktop_window(config: DomainConfig, deps: dict[str, Any]) -> Any:
             painter.setFont(font)
             label = str(node.get("label") or "")
             painter.drawText(int(x - 58), int(y + radius + 5), 116, 30, Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop, label)
+
+    def _navigation_marker_icon(marker: dict[str, str]) -> Any:
+        pixmap = QPixmap(16, 16)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        color = QColor(str(marker.get("color") or GUI_STYLE_COLORS["muted"]))
+        painter.setBrush(color)
+        painter.setPen(QPen(color, 1))
+        shape = str(marker.get("shape") or "circle")
+        if shape == "square":
+            painter.drawRect(4, 4, 8, 8)
+        elif shape == "hexagon":
+            painter.drawPolygon(
+                QPolygonF(
+                    [
+                        QPointF(8, 2),
+                        QPointF(13, 5),
+                        QPointF(13, 11),
+                        QPointF(8, 14),
+                        QPointF(3, 11),
+                        QPointF(3, 5),
+                    ]
+                )
+            )
+        else:
+            painter.drawEllipse(4, 4, 8, 8)
+        painter.end()
+        return QIcon(pixmap)
 
     class WikiDesktopWindow(QMainWindow):
         def __init__(self, domain_config: DomainConfig) -> None:
@@ -731,18 +769,26 @@ def _create_desktop_window(config: DomainConfig, deps: dict[str, Any]) -> Any:
                 item.setFlags(Qt.ItemFlag.NoItemFlags)
                 self.page_list.addItem(item)
                 return
-            for group_title, pages in _group_pages(self._pages):
-                header = QListWidgetItem(group_title)
-                header.setData(Qt.ItemDataRole.UserRole, "")
-                header.setFlags(Qt.ItemFlag.NoItemFlags)
-                header.setForeground(QColor(GUI_STYLE_COLORS["muted"]))
-                self.page_list.addItem(header)
-                for page in pages:
-                    label = f"{page.get('label') or page.get('title') or page.get('path')}"
-                    item = QListWidgetItem(label)
-                    item.setToolTip(str(page.get("tooltip") or page.get("title") or page.get("path")))
-                    item.setData(Qt.ItemDataRole.UserRole, str(page.get("path", "")))
-                    self.page_list.addItem(item)
+            header_font = QFont("Segoe UI", 10)
+            header_font.setBold(True)
+            page_font = QFont("Segoe UI", 9)
+            for nav_item in build_page_navigation_items(self._pages):
+                if nav_item["kind"] == "header":
+                    header = QListWidgetItem(str(nav_item["title"]))
+                    header.setData(Qt.ItemDataRole.UserRole, "")
+                    header.setFlags(navigation_item_flags(nav_item, Qt.ItemFlag))
+                    header.setFont(header_font)
+                    header.setForeground(QColor(GUI_STYLE_COLORS["text"]))
+                    header.setIcon(_navigation_marker_icon(nav_item.get("marker") or {}))
+                    self.page_list.addItem(header)
+                    continue
+                item = QListWidgetItem(PAGE_NAVIGATION_CHILD_INDENT + str(nav_item["title"]))
+                item.setToolTip(str(nav_item.get("tooltip") or nav_item.get("path") or nav_item["title"]))
+                item.setData(Qt.ItemDataRole.UserRole, str(nav_item.get("path", "")))
+                item.setFlags(navigation_item_flags(nav_item, Qt.ItemFlag))
+                item.setFont(page_font)
+                item.setForeground(QColor(GUI_STYLE_COLORS["text"]))
+                self.page_list.addItem(item)
 
         def _on_page_selected(self, current: Any, _previous: Any) -> None:
             if current is None:
@@ -1094,26 +1140,75 @@ def resolve_wiki_link(current_path: str, href: str, valid_paths: set[str]) -> st
     return None
 
 
-def _group_pages(pages: list[dict[str, Any]]) -> list[tuple[str, list[dict[str, Any]]]]:
-    order = [
-        ("sources", "source"),
-        ("concepts", "concept"),
-        ("answers", "answer"),
-        ("journal", "journal"),
-        ("index", "index"),
-        ("overview", "overview"),
-    ]
-    buckets: dict[str, list[dict[str, Any]]] = {}
+def build_page_navigation_items(pages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    buckets: dict[str, list[dict[str, Any]]] = {group_key: [] for group_key, _title, _marker in PAGE_NAVIGATION_GROUPS}
     for page in pages:
-        buckets.setdefault(str(page.get("type", "page")), []).append(page)
-    grouped: list[tuple[str, list[dict[str, Any]]]] = []
-    for label, page_type in order:
-        items = buckets.pop(page_type, [])
-        if items:
-            grouped.append((label, items))
-    for page_type, items in sorted(buckets.items()):
-        grouped.append((page_type, items))
-    return grouped
+        buckets.setdefault(_navigation_group_key(page), []).append(page)
+
+    items: list[dict[str, Any]] = []
+    for group_key, title, marker in PAGE_NAVIGATION_GROUPS:
+        group_pages = _sort_navigation_group(group_key, buckets.get(group_key, []))
+        if not group_pages:
+            continue
+        items.append({"kind": "header", "title": title, "group": group_key, "marker": marker})
+        for page in group_pages:
+            items.append(
+                {
+                    "kind": "page",
+                    "title": _page_navigation_label(page),
+                    "group": group_key,
+                    "path": str(page.get("path", "")),
+                    "tooltip": str(page.get("tooltip") or page.get("title") or page.get("path") or ""),
+                }
+            )
+    return items
+
+
+def navigation_item_flags(nav_item: dict[str, Any], item_flag: Any) -> Any:
+    if nav_item.get("kind") == "header":
+        return item_flag.ItemIsEnabled
+    return item_flag.ItemIsEnabled | item_flag.ItemIsSelectable
+
+
+def _group_pages(pages: list[dict[str, Any]]) -> list[tuple[str, list[dict[str, Any]]]]:
+    buckets: dict[str, list[dict[str, Any]]] = {group_key: [] for group_key, _title, _marker in PAGE_NAVIGATION_GROUPS}
+    for page in pages:
+        buckets.setdefault(_navigation_group_key(page), []).append(page)
+    return [
+        (title, _sort_navigation_group(group_key, buckets[group_key]))
+        for group_key, title, _marker in PAGE_NAVIGATION_GROUPS
+        if buckets.get(group_key)
+    ]
+
+
+def _navigation_group_key(page: dict[str, Any]) -> str:
+    page_type = str(page.get("type", "page"))
+    path = str(page.get("path", ""))
+    filename = PurePosixPath(path).name.lower()
+    if page_type in {"index", "overview"} or filename in {"index.md", "overview.md"}:
+        return "info"
+    if page_type == "concept" or path.startswith("wiki/concepts/"):
+        return "concept"
+    if page_type == "source" or path.startswith("wiki/sources/"):
+        return "source"
+    return "log"
+
+
+def _sort_navigation_group(group_key: str, pages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if group_key != "info":
+        return pages
+    order = {"index.md": 0, "overview.md": 1}
+    return sorted(pages, key=lambda page: order.get(PurePosixPath(str(page.get("path", ""))).name.lower(), 99))
+
+
+def _page_navigation_label(page: dict[str, Any]) -> str:
+    label = str(page.get("label") or page.get("title") or "").strip()
+    if label:
+        return label
+    path = str(page.get("path", "")).strip()
+    if not path:
+        return "Untitled"
+    return PurePosixPath(path).stem or path
 
 
 def _quality_value(content: str) -> str:

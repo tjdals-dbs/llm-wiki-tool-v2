@@ -1,3 +1,4 @@
+from enum import IntFlag
 import tempfile
 import unittest
 from pathlib import Path
@@ -24,6 +25,8 @@ from wiki_tool.desktop_gui import (
     summarize_maintenance_status,
     worker_failure_result,
     worker_success_result,
+    build_page_navigation_items,
+    navigation_item_flags,
     _graph_item_label,
     _graph_status_text,
     build_local_graph_layout,
@@ -179,6 +182,16 @@ class FakePresenter:
         return "pending source: 0"
 
 
+class FakeItemFlag(IntFlag):
+    NoItemFlags = 0
+    ItemIsSelectable = 1
+    ItemIsEditable = 2
+    ItemIsDragEnabled = 4
+    ItemIsDropEnabled = 8
+    ItemIsUserCheckable = 16
+    ItemIsEnabled = 32
+
+
 class DesktopGuiTests(unittest.TestCase):
     def test_korean_three_panel_labels_do_not_offer_upload_ux(self):
         labels = " ".join(GUI_PANEL_TITLES + GUI_ACTION_LABELS)
@@ -195,6 +208,64 @@ class DesktopGuiTests(unittest.TestCase):
         self.assertEqual(GUI_PANEL_WEIGHTS, (280, 796, 364))
         self.assertEqual(GUI_STYLE_COLORS["document_bg"], "#f7f7f5")
         self.assertEqual(GUI_GRAPH_TYPE_LABELS["concept"], "개념")
+
+    def test_page_navigation_groups_info_concepts_sources_and_logs_in_order(self):
+        pages = [
+            {"path": "wiki/sources/capm.md", "type": "source", "label": "CAPM Source"},
+            {"path": "wiki/log.md", "type": "page", "label": "log"},
+            {"path": "wiki/overview.md", "type": "overview", "label": "Overview"},
+            {"path": "wiki/concepts/capm.md", "type": "concept", "label": "CAPM"},
+            {"path": "wiki/index.md", "type": "index", "label": "Index"},
+        ]
+
+        items = build_page_navigation_items(pages)
+        headers = [item for item in items if item["kind"] == "header"]
+
+        self.assertEqual([header["title"] for header in headers], ["Wiki Info", "Concepts", "Sources", "Logs"])
+        self.assertLess(
+            next(index for index, item in enumerate(items) if item.get("title") == "Concepts"),
+            next(index for index, item in enumerate(items) if item.get("title") == "Sources"),
+        )
+
+    def test_page_navigation_headers_have_marker_style_and_no_page_path(self):
+        items = build_page_navigation_items(
+            [
+                {"path": "wiki/index.md", "type": "index", "label": "Index"},
+                {"path": "wiki/concepts/capm.md", "type": "concept", "label": "CAPM"},
+            ]
+        )
+        headers = [item for item in items if item["kind"] == "header"]
+        pages = [item for item in items if item["kind"] == "page"]
+
+        self.assertEqual(headers[0]["marker"], {"shape": "hexagon", "color": "#8b95a5"})
+        self.assertEqual(headers[1]["marker"], {"shape": "circle", "color": "#4fb277"})
+        self.assertTrue(all(not header.get("path") for header in headers))
+        self.assertTrue(all("marker" not in page for page in pages))
+        self.assertEqual([page["path"] for page in pages], ["wiki/index.md", "wiki/concepts/capm.md"])
+
+    def test_page_navigation_header_flags_are_enabled_but_not_selectable(self):
+        header = {"kind": "header", "title": "Concepts"}
+        page = {"kind": "page", "title": "CAPM", "path": "wiki/concepts/capm.md"}
+
+        header_flags = navigation_item_flags(header, FakeItemFlag)
+        page_flags = navigation_item_flags(page, FakeItemFlag)
+
+        self.assertTrue(header_flags & FakeItemFlag.ItemIsEnabled)
+        self.assertFalse(header_flags & FakeItemFlag.ItemIsSelectable)
+        self.assertTrue(page_flags & FakeItemFlag.ItemIsEnabled)
+        self.assertTrue(page_flags & FakeItemFlag.ItemIsSelectable)
+
+    def test_page_navigation_uses_labels_without_file_paths_or_extensions(self):
+        items = build_page_navigation_items(
+            [
+                {"path": "wiki/sources/capm.md", "type": "source", "label": "CAPM"},
+                {"path": "wiki/log.md", "type": "page", "title": "Maintenance Log"},
+            ]
+        )
+        page_labels = [item["title"] for item in items if item["kind"] == "page"]
+
+        self.assertEqual(page_labels, ["CAPM", "Maintenance Log"])
+        self.assertFalse(any("wiki/" in label or label.endswith(".md") for label in page_labels))
 
     def test_presenter_returns_korean_status_messages_for_maintenance_actions(self):
         adapter = FakeAdapter()
