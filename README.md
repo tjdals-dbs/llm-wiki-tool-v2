@@ -154,3 +154,9 @@ python scripts\smoke_codex_provider.py --domain examples\finance\domain.yml --qu
 - vision 기반 이미지/PDF 분석은 현재 핵심 pipeline이 아니라 확장 경로입니다.
 - 완전한 background job system은 아닙니다. `scripts\run_agent_runtime.py`는 반복 실행 루프를 제공하지만, 작업 큐와 retry dashboard를 갖춘 별도 job runner는 아닙니다.
 - 검색은 현재 로컬 Markdown 기반 검색과 graph context 중심입니다. 별도 vector database는 포함하지 않습니다.
+
+## 사용자 도메인 저장소
+
+`examples/`는 public sample과 테스트 fixture용입니다. 실제 사용자는 `user_domains/<slug>/` 아래에 자기 도메인을 만들고 `domain.yml`, `raw/`, `manifests/`, `wiki/`를 둡니다.
+
+`user_domains/<slug>/` 아래의 개인 raw 자료와 생성 산출물은 local runtime data로 취급되며 Git에 올라가지 않도록 ignore됩니다. 현재 단계에서는 이 구조를 수동으로 만들 수 있고, 다음 단계에서 init script가 자동 생성을 담당할 예정입니다.

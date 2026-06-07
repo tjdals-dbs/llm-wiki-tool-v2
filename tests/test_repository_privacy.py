@@ -27,6 +27,13 @@ class RepositoryPrivacyTests(unittest.TestCase):
         for suffix in sorted(FORBIDDEN_EXAMPLE_RAW_SUFFIXES):
             self.assertIn(f"/examples/**/raw/**/*{suffix}", gitignore)
 
+    def test_gitignore_keeps_user_domain_root_but_ignores_private_domains(self):
+        gitignore = (REPO_ROOT / ".gitignore").read_text(encoding="utf-8")
+
+        self.assertIn("/user_domains/*", gitignore)
+        self.assertIn("!/user_domains/.gitkeep", gitignore)
+        self.assertIn("!/user_domains/README.md", gitignore)
+
     def test_tracked_example_raw_files_are_public_safe_text_fixtures(self):
         result = subprocess.run(
             ["git", "ls-files", "examples"],

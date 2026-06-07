@@ -39,3 +39,8 @@ venv/
 # Local generated state for private domains.
 /manifests/
 /wiki/
+
+# User domain runtime storage. Keep only the folder marker and local guidance.
+/user_domains/*
+!/user_domains/.gitkeep
+!/user_domains/README.md
