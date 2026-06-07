@@ -15,9 +15,13 @@ from wiki_tool.desktop_gui import (
     GuiTaskResult,
     McpCodexAgentRoute,
     _agent_route_line,
+    append_agent_exchange,
     build_agent_pending_message,
     build_maintenance_pending_message,
     build_maintenance_task_specs,
+    render_chat_messages_html,
+    replace_chat_message,
+    summarize_maintenance_status,
     worker_failure_result,
     worker_success_result,
     _graph_item_label,
@@ -251,6 +255,66 @@ class DesktopGuiTests(unittest.TestCase):
 
         self.assertIn("답변 생성 중", message)
         self.assertIn("agent route: 실행 중", message)
+
+    def test_chat_question_adds_user_and_assistant_pending_messages(self):
+        messages = []
+
+        pending_index = append_agent_exchange(messages, "CAPM은 무엇인가?")
+
+        self.assertEqual(pending_index, 1)
+        self.assertEqual(messages[0]["role"], "user")
+        self.assertEqual(messages[0]["content"], "CAPM은 무엇인가?")
+        self.assertEqual(messages[1]["role"], "assistant")
+        self.assertEqual(messages[1]["status"], "pending")
+        self.assertIn("답변 생성 중", messages[1]["content"])
+
+    def test_chat_html_uses_directional_bubbles_without_author_label(self):
+        messages = [
+            {"role": "user", "content": "CAPM?", "status": "complete"},
+            {"role": "assistant", "content": "답변입니다.", "status": "complete"},
+        ]
+
+        html = render_chat_messages_html(messages)
+
+        self.assertIn("message-row user", html)
+        self.assertIn("message-row assistant", html)
+        self.assertIn("bubble user-bubble", html)
+        self.assertIn("bubble assistant-bubble", html)
+        self.assertNotIn("haiku 서브에이전트", html)
+        self.assertNotIn("assistant:", html.lower())
+
+    def test_agent_completion_replaces_pending_message(self):
+        messages = []
+        pending_index = append_agent_exchange(messages, "CAPM?")
+
+        replace_chat_message(messages, pending_index, "완료 답변\n\nagent route: mcp/codex\nstatus: ok")
+
+        self.assertEqual(len(messages), 2)
+        self.assertEqual(messages[pending_index]["status"], "complete")
+        self.assertIn("완료 답변", messages[pending_index]["content"])
+        self.assertNotIn("답변 생성 중", messages[pending_index]["content"])
+
+    def test_chat_html_renders_used_pages_as_supporting_text(self):
+        messages = [
+            {
+                "role": "assistant",
+                "status": "complete",
+                "content": "CAPM 답변\n\nused pages:\n- wiki/concepts/capm.md: CAPM\n\nrelated pages:\n- 없음",
+            }
+        ]
+
+        html = render_chat_messages_html(messages)
+
+        self.assertIn("message-support", html)
+        self.assertIn("used pages:", html)
+        self.assertIn("related pages:", html)
+
+    def test_maintenance_status_summary_does_not_require_chat_message(self):
+        summary = summarize_maintenance_status("maintenance 실행", "Maintenance Run Report\n전체 동기화 완료\n상태: 성공\nraw scan: 신규 0개")
+
+        self.assertIn("maintenance 실행 완료", summary)
+        self.assertIn("상태: 성공", summary)
+        self.assertLessEqual(len([line for line in summary.splitlines() if line.strip()]), 2)
 
     def test_worker_success_result_preserves_agent_route_and_output(self):
         result = worker_success_result("agent", "답변\n\nagent route: mcp/codex\nstatus: ok", refresh_pages=False)

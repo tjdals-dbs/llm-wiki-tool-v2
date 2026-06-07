@@ -60,6 +60,7 @@ class GuiTaskResult:
     refresh_pages: bool = False
     route_line: str | None = None
     error: str | None = None
+    label: str = "작업"
 
 
 @dataclass(frozen=True)
@@ -250,6 +251,85 @@ def build_agent_pending_message() -> str:
     return "\n".join(["답변 생성 중...", "agent route 실행 중...", "agent route: 실행 중"])
 
 
+def append_agent_exchange(messages: list[dict[str, str]], query: str) -> int:
+    messages.append({"role": "user", "content": query, "status": "complete"})
+    messages.append({"role": "assistant", "content": build_agent_pending_message(), "status": "pending"})
+    return len(messages) - 1
+
+
+def replace_chat_message(messages: list[dict[str, str]], index: int, content: str, *, status: str = "complete") -> None:
+    if index < 0 or index >= len(messages):
+        return
+    messages[index] = {**messages[index], "content": content, "status": status}
+
+
+def render_chat_messages_html(messages: list[dict[str, str]]) -> str:
+    rendered = "\n".join(_render_chat_message_html(message) for message in messages)
+    return f"""
+    <html>
+    <head>
+    <style>
+      body {{
+        margin: 0;
+        padding: 10px 8px 14px 8px;
+        background: {GUI_STYLE_COLORS["surface"]};
+        color: {GUI_STYLE_COLORS["text"]};
+        font-family: "Segoe UI", sans-serif;
+        font-size: 13px;
+      }}
+      .message-row {{
+        display: block;
+        margin: 8px 0;
+        width: 100%;
+        clear: both;
+      }}
+      .message-row.user {{ text-align: right; }}
+      .message-row.assistant {{ text-align: left; }}
+      .bubble {{
+        display: inline-block;
+        max-width: 82%;
+        padding: 8px 10px;
+        border-radius: 8px;
+        line-height: 1.48;
+        text-align: left;
+        white-space: normal;
+      }}
+      .user-bubble {{
+        background: {GUI_STYLE_COLORS["accent_soft"]};
+        border: 1px solid #c5d6fb;
+      }}
+      .assistant-bubble {{
+        background: #f7f7f5;
+        border: 1px solid {GUI_STYLE_COLORS["border"]};
+      }}
+      .message-support {{
+        margin-top: 8px;
+        padding-top: 6px;
+        border-top: 1px solid #dfe4ed;
+        color: {GUI_STYLE_COLORS["muted"]};
+        font-size: 11px;
+        line-height: 1.42;
+      }}
+      .pending {{
+        color: {GUI_STYLE_COLORS["muted"]};
+      }}
+    </style>
+    </head>
+    <body>{rendered}</body>
+    </html>
+    """
+
+
+def summarize_maintenance_status(label: str, message: str) -> str:
+    lines = [line.strip() for line in message.splitlines() if line.strip()]
+    if not lines:
+        return f"{label} 완료"
+    if lines[0] == "Maintenance Run Report":
+        status_line = next((line for line in lines if line.startswith("상태:")), "")
+        return "\n".join(line for line in [f"{label} 완료", status_line] if line)
+    return "\n".join(lines[:2])
+
+
 def build_maintenance_pending_message() -> str:
     return "maintenance 실행 중...\nraw scan, source summary, concept organize, lint를 순서대로 실행합니다."
 
@@ -307,14 +387,14 @@ def build_maintenance_task_specs(presenter: Any) -> dict[str, GuiTaskSpec]:
     }
 
 
-def worker_success_result(kind: str, message: str, *, refresh_pages: bool) -> GuiTaskResult:
-    return GuiTaskResult(kind=kind, ok=True, message=message, refresh_pages=refresh_pages, route_line=_agent_route_line(message) if kind == "agent" else None)
+def worker_success_result(kind: str, message: str, *, refresh_pages: bool, label: str = "작업") -> GuiTaskResult:
+    return GuiTaskResult(kind=kind, ok=True, message=message, refresh_pages=refresh_pages, route_line=_agent_route_line(message) if kind == "agent" else None, label=label)
 
 
 def worker_failure_result(kind: str, label: str, error: BaseException, *, refresh_pages: bool = False) -> GuiTaskResult:
     message = f"{label} 실패\n오류: {error}"
     route_line = "agent route: 실패" if kind == "agent" else None
-    return GuiTaskResult(kind=kind, ok=False, message=message, refresh_pages=refresh_pages, route_line=route_line, error=str(error))
+    return GuiTaskResult(kind=kind, ok=False, message=message, refresh_pages=refresh_pages, route_line=route_line, error=str(error), label=label)
 
 
 def _load_pyside6() -> dict[str, Any]:
@@ -384,7 +464,7 @@ def _create_desktop_window(config: DomainConfig, deps: dict[str, Any]) -> Any:
 
         def run(self) -> None:
             try:
-                self.succeeded.emit(worker_success_result(self.kind, self.task(), refresh_pages=self.refresh_pages))
+                self.succeeded.emit(worker_success_result(self.kind, self.task(), refresh_pages=self.refresh_pages, label=self.label))
             except Exception as exc:
                 self.failed.emit(worker_failure_result(self.kind, self.label, exc))
 
@@ -502,6 +582,8 @@ def _create_desktop_window(config: DomainConfig, deps: dict[str, Any]) -> Any:
             self._selected_path: str | None = None
             self._valid_paths: set[str] = set()
             self._background_tasks: list[tuple[Any, Any]] = []
+            self._chat_messages: list[dict[str, str]] = []
+            self._pending_agent_message_index: int | None = None
             self._agent_running = False
             self._maintenance_running = False
             self.maintenance_buttons: list[Any] = []
@@ -605,20 +687,27 @@ def _create_desktop_window(config: DomainConfig, deps: dict[str, Any]) -> Any:
                 maintenance_layout.addWidget(button)
             layout.addWidget(maintenance)
 
+            self.chat_log = QTextBrowser()
+            self.chat_log.setObjectName("ChatLog")
+            self.chat_log.setOpenExternalLinks(False)
+            self.chat_log.setHtml(render_chat_messages_html(self._chat_messages))
+            layout.addWidget(self.chat_log, stretch=1)
+
             self.question_input = QLineEdit()
             self.question_input.setPlaceholderText("질문을 입력하세요")
             self.question_input.returnPressed.connect(self._ask)
-            layout.addWidget(self.question_input)
             ask_row = QHBoxLayout()
+            ask_row.addWidget(self.question_input, stretch=1)
             self.ask_button = QPushButton("에이전트에게 질문")
             self.ask_button.setObjectName("PrimaryButton")
             self.ask_button.clicked.connect(self._ask)
             ask_row.addWidget(self.ask_button)
             layout.addLayout(ask_row)
 
-            self.agent_output = QTextBrowser()
-            self.agent_output.setObjectName("AgentOutput")
-            layout.addWidget(self.agent_output, stretch=1)
+            self.status_label = QLabel("준비됨")
+            self.status_label.setObjectName("StatusLabel")
+            self.status_label.setWordWrap(True)
+            layout.addWidget(self.status_label)
             return panel
 
         def refresh_pages(self) -> None:
@@ -715,7 +804,7 @@ def _create_desktop_window(config: DomainConfig, deps: dict[str, Any]) -> Any:
             spec = self._maintenance_task_specs[key]
             self._maintenance_running = True
             self._set_maintenance_enabled(False)
-            self._set_agent_output(spec.pending_message)
+            self._set_status_text(spec.pending_message)
             self._start_background_task(
                 kind=spec.kind,
                 label=spec.label,
@@ -726,15 +815,16 @@ def _create_desktop_window(config: DomainConfig, deps: dict[str, Any]) -> Any:
         def _ask(self) -> None:
             if self._agent_running:
                 return
-            query = self.question_input.text()
+            query = self.question_input.text().strip()
             if not query.strip():
-                self._set_agent_output(self.presenter.ask_agent(query))
+                self._set_status_text(self.presenter.ask_agent(query))
                 return
+            self.question_input.clear()
             self._agent_running = True
             self._set_agent_enabled(False)
-            pending_message = build_agent_pending_message()
-            self.route_label.setText(_agent_route_line(pending_message))
-            self._set_agent_output(pending_message)
+            self._pending_agent_message_index = append_agent_exchange(self._chat_messages, query)
+            self.route_label.setText(_agent_route_line(build_agent_pending_message()))
+            self._render_chat_log()
             self._start_background_task(
                 kind="agent",
                 label="에이전트 질문",
@@ -762,10 +852,21 @@ def _create_desktop_window(config: DomainConfig, deps: dict[str, Any]) -> Any:
                 self._agent_running = False
                 self._set_agent_enabled(True)
                 self.route_label.setText(result.route_line or _agent_route_line(result.message))
+                if self._pending_agent_message_index is not None:
+                    replace_chat_message(
+                        self._chat_messages,
+                        self._pending_agent_message_index,
+                        result.message,
+                        status="complete" if result.ok else "failed",
+                    )
+                    self._pending_agent_message_index = None
+                else:
+                    self._chat_messages.append({"role": "assistant", "content": result.message, "status": "complete" if result.ok else "failed"})
+                self._render_chat_log()
             elif result.kind == "maintenance":
                 self._maintenance_running = False
                 self._set_maintenance_enabled(True)
-            self._set_agent_output(result.message)
+                self._set_status_text(summarize_maintenance_status(result.label, result.message))
             if result.refresh_pages:
                 self.refresh_pages()
 
@@ -783,8 +884,13 @@ def _create_desktop_window(config: DomainConfig, deps: dict[str, Any]) -> Any:
             for button in self.maintenance_buttons:
                 button.setEnabled(enabled)
 
-        def _set_agent_output(self, message: str) -> None:
-            self.agent_output.setHtml(_plain_text_html(message))
+        def _set_status_text(self, message: str) -> None:
+            self.status_label.setText(message)
+
+        def _render_chat_log(self) -> None:
+            self.chat_log.setHtml(render_chat_messages_html(self._chat_messages))
+            scrollbar = self.chat_log.verticalScrollBar()
+            scrollbar.setValue(scrollbar.maximum())
 
     return WikiDesktopWindow(config)
 
@@ -814,6 +920,38 @@ def _agent_route_line(message: str) -> str:
 
 def _plain_text_html(message: str) -> str:
     return "<div class='agent-message'>" + "<br>".join(escape(line) for line in message.splitlines()) + "</div>"
+
+
+def _render_chat_message_html(message: dict[str, str]) -> str:
+    role = message.get("role", "assistant")
+    status = message.get("status", "complete")
+    content = message.get("content", "")
+    body, support = _split_assistant_support(content) if role == "assistant" else (content, "")
+    role_class = "user" if role == "user" else "assistant"
+    bubble_class = "user-bubble" if role == "user" else "assistant-bubble"
+    status_class = " pending" if status == "pending" else ""
+    html = [
+        f'<div class="message-row {role_class}">',
+        f'<div class="bubble {bubble_class}{status_class}">',
+        _text_to_html(body),
+    ]
+    if support:
+        html.append(f'<div class="message-support">{_text_to_html(support)}</div>')
+    html.extend(["</div>", "</div>"])
+    return "".join(html)
+
+
+def _split_assistant_support(content: str) -> tuple[str, str]:
+    markers = ["\nused pages:", "\nrelated pages:"]
+    positions = [content.find(marker) for marker in markers if content.find(marker) >= 0]
+    if not positions:
+        return content, ""
+    split_at = min(positions)
+    return content[:split_at].rstrip(), content[split_at:].strip()
+
+
+def _text_to_html(text: str) -> str:
+    return "<br>".join(escape(line) for line in text.splitlines())
 
 
 def _stylesheet() -> str:
@@ -906,13 +1044,18 @@ def _stylesheet() -> str:
         font-size: 14px;
         line-height: 1.48;
     }}
-    QTextBrowser#AgentOutput {{
+    QTextBrowser#ChatLog {{
         background: {GUI_STYLE_COLORS["surface"]};
         border: 1px solid {GUI_STYLE_COLORS["border"]};
         border-radius: 8px;
-        padding: 12px;
+        padding: 0;
         font-family: "Segoe UI";
         font-size: 13px;
+    }}
+    QLabel#StatusLabel {{
+        color: {GUI_STYLE_COLORS["muted"]};
+        font-size: 11px;
+        padding: 2px 2px 0 2px;
     }}
     QFrame#MaintenanceBox {{
         background: #edf1f7;
