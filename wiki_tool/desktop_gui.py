@@ -10,11 +10,13 @@ from typing import Any, Callable
 from urllib.parse import unquote, urlparse
 
 from .agent_provider import PROVIDER_CODEX, load_agent_provider_config
-from .config import DomainConfig
+from .config import DomainConfig, load_domain_config
 from .mcp_registry import create_tool_registry
 from .mcp_tools import WikiToolAdapter
+from .user_domain import discover_domain_files, domain_display_name
 
 
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 GUI_PANEL_TITLES = ["위키 라이브러리", "문서와 Graphify", "Wiki Agent"]
 GUI_ACTION_LABELS = ["raw 스캔", "새 source 요약", "pending concept 조직", "wiki lint", "maintenance 실행", "에이전트에게 질문"]
 GUI_GRAPH_TYPE_LABELS = {
@@ -78,6 +80,14 @@ class GuiTaskSpec:
     pending_message: str
     task: Callable[[], str]
     refresh_pages: bool
+
+
+@dataclass(frozen=True)
+class DomainRuntime:
+    config: DomainConfig
+    adapter: Any
+    presenter: "DesktopGuiPresenter"
+    maintenance_task_specs: dict[str, GuiTaskSpec]
 
 
 class DirectAdapterAgentFallback:
@@ -394,6 +404,20 @@ def build_maintenance_task_specs(presenter: Any) -> dict[str, GuiTaskSpec]:
     }
 
 
+def build_domain_runtime(config: DomainConfig, *, adapter_factory: Callable[[DomainConfig], Any] = WikiToolAdapter) -> DomainRuntime:
+    adapter = adapter_factory(config)
+    presenter = DesktopGuiPresenter(
+        adapter,
+        agent_route=McpCodexAgentRoute(config, fallback=DirectAdapterAgentFallback(adapter)),
+    )
+    return DomainRuntime(
+        config=config,
+        adapter=adapter,
+        presenter=presenter,
+        maintenance_task_specs=build_maintenance_task_specs(presenter),
+    )
+
+
 def worker_success_result(kind: str, message: str, *, refresh_pages: bool, label: str = "작업") -> GuiTaskResult:
     return GuiTaskResult(kind=kind, ok=True, message=message, refresh_pages=refresh_pages, route_line=_agent_route_line(message) if kind == "agent" else None, label=label)
 
@@ -410,6 +434,7 @@ def _load_pyside6() -> dict[str, Any]:
         from PySide6.QtGui import QColor, QDesktopServices, QFont, QIcon, QPainter, QPen, QPixmap, QPolygonF
         from PySide6.QtWidgets import (
             QApplication,
+            QComboBox,
             QFrame,
             QHBoxLayout,
             QLabel,
@@ -435,6 +460,7 @@ def _create_desktop_window(config: DomainConfig, deps: dict[str, Any]) -> Any:
     QColor = deps["QColor"]
     QDesktopServices = deps["QDesktopServices"]
     QFont = deps["QFont"]
+    QComboBox = deps["QComboBox"]
     QFrame = deps["QFrame"]
     QHBoxLayout = deps["QHBoxLayout"]
     QLabel = deps["QLabel"]
@@ -609,13 +635,12 @@ def _create_desktop_window(config: DomainConfig, deps: dict[str, Any]) -> Any:
     class WikiDesktopWindow(QMainWindow):
         def __init__(self, domain_config: DomainConfig) -> None:
             super().__init__()
-            self.config = domain_config
-            self.adapter = WikiToolAdapter(domain_config)
-            self.presenter = DesktopGuiPresenter(
-                self.adapter,
-                agent_route=McpCodexAgentRoute(domain_config, fallback=DirectAdapterAgentFallback(self.adapter)),
-            )
-            self._maintenance_task_specs = build_maintenance_task_specs(self.presenter)
+            runtime = build_domain_runtime(domain_config)
+            self.config = runtime.config
+            self.adapter = runtime.adapter
+            self.presenter = runtime.presenter
+            self._maintenance_task_specs = runtime.maintenance_task_specs
+            self._domain_files: list[Path] = []
             self._pages: list[dict[str, Any]] = []
             self._selected_path: str | None = None
             self._valid_paths: set[str] = set()
@@ -628,6 +653,7 @@ def _create_desktop_window(config: DomainConfig, deps: dict[str, Any]) -> Any:
             self.setWindowTitle("LLM Wiki Tool v2")
             self.resize(1440, 840)
             self._build_layout()
+            self.refresh_domain_options()
             self.refresh_pages()
 
         def _build_layout(self) -> None:
@@ -652,6 +678,18 @@ def _create_desktop_window(config: DomainConfig, deps: dict[str, Any]) -> Any:
             subtitle = QLabel(GUI_PANEL_TITLES[0])
             subtitle.setObjectName("MutedLabel")
             layout.addWidget(subtitle)
+
+            self.domain_combo = QComboBox()
+            self.domain_combo.setObjectName("DomainCombo")
+            layout.addWidget(self.domain_combo)
+            domain_row = QHBoxLayout()
+            self.domain_refresh_button = QPushButton("새로고침")
+            self.domain_refresh_button.clicked.connect(self.refresh_domain_options)
+            self.domain_switch_button = QPushButton("도메인 전환")
+            self.domain_switch_button.clicked.connect(self._switch_selected_domain)
+            domain_row.addWidget(self.domain_refresh_button)
+            domain_row.addWidget(self.domain_switch_button)
+            layout.addLayout(domain_row)
 
             self.search_input = QLineEdit()
             self.search_input.setPlaceholderText("문서 검색")
@@ -761,6 +799,61 @@ def _create_desktop_window(config: DomainConfig, deps: dict[str, Any]) -> Any:
                 self.document_view.setPlainText("wiki page가 없습니다. raw 폴더에 자료를 넣고 maintenance를 실행하세요.")
                 self.graph_widget.set_graph(_fallback_graph_node(""), [])
 
+        def refresh_domain_options(self) -> None:
+            if self._agent_running or self._maintenance_running:
+                self._set_status_text("작업 중에는 도메인 목록을 새로고침할 수 없습니다.")
+                return
+            current_domain = self._current_domain_file()
+            self._domain_files = discover_domain_files(PROJECT_ROOT, current_domain=current_domain)
+            self.domain_combo.blockSignals(True)
+            self.domain_combo.clear()
+            selected_index = 0
+            for index, domain_file in enumerate(self._domain_files):
+                self.domain_combo.addItem(domain_display_name(domain_file), str(domain_file))
+                if domain_file == current_domain:
+                    selected_index = index
+            if self._domain_files:
+                self.domain_combo.setCurrentIndex(selected_index)
+            self.domain_combo.blockSignals(False)
+
+        def _current_domain_file(self) -> Path:
+            return (self.config.root / "domain.yml").resolve()
+
+        def _switch_selected_domain(self) -> None:
+            if self._agent_running or self._maintenance_running:
+                self._set_status_text("작업 중에는 도메인을 전환할 수 없습니다.")
+                return
+            domain_value = self.domain_combo.currentData(Qt.ItemDataRole.UserRole)
+            if not domain_value:
+                self._set_status_text("전환할 도메인이 없습니다.")
+                return
+            domain_file = Path(str(domain_value)).resolve()
+            if domain_file == self._current_domain_file():
+                self._set_status_text(f"이미 선택된 도메인입니다: {domain_display_name(domain_file)}")
+                return
+            try:
+                self._apply_domain_config(load_domain_config(domain_file))
+            except Exception as exc:
+                self._set_status_text(f"도메인 전환 실패: {exc}")
+
+        def _apply_domain_config(self, config: DomainConfig) -> None:
+            runtime = build_domain_runtime(config)
+            self.config = runtime.config
+            self.adapter = runtime.adapter
+            self.presenter = runtime.presenter
+            self._maintenance_task_specs = runtime.maintenance_task_specs
+            self._pages = []
+            self._selected_path = None
+            self._valid_paths = set()
+            self._chat_messages = []
+            self._pending_agent_message_index = None
+            self.search_input.clear()
+            self.route_label.setText("agent route: 준비됨")
+            self._set_status_text(f"도메인 전환 완료: {config.name} ({config.slug})")
+            self._render_chat_log()
+            self.refresh_domain_options()
+            self.refresh_pages()
+
         def _render_page_list(self) -> None:
             self.page_list.clear()
             if not self._pages:
@@ -850,6 +943,7 @@ def _create_desktop_window(config: DomainConfig, deps: dict[str, Any]) -> Any:
             spec = self._maintenance_task_specs[key]
             self._maintenance_running = True
             self._set_maintenance_enabled(False)
+            self._update_domain_controls_enabled()
             self._set_status_text(spec.pending_message)
             self._start_background_task(
                 kind=spec.kind,
@@ -868,6 +962,7 @@ def _create_desktop_window(config: DomainConfig, deps: dict[str, Any]) -> Any:
             self.question_input.clear()
             self._agent_running = True
             self._set_agent_enabled(False)
+            self._update_domain_controls_enabled()
             self._pending_agent_message_index = append_agent_exchange(self._chat_messages, query)
             self.route_label.setText(_agent_route_line(build_agent_pending_message()))
             self._render_chat_log()
@@ -897,6 +992,7 @@ def _create_desktop_window(config: DomainConfig, deps: dict[str, Any]) -> Any:
             if result.kind == "agent":
                 self._agent_running = False
                 self._set_agent_enabled(True)
+                self._update_domain_controls_enabled()
                 self.route_label.setText(result.route_line or _agent_route_line(result.message))
                 if self._pending_agent_message_index is not None:
                     replace_chat_message(
@@ -912,6 +1008,7 @@ def _create_desktop_window(config: DomainConfig, deps: dict[str, Any]) -> Any:
             elif result.kind == "maintenance":
                 self._maintenance_running = False
                 self._set_maintenance_enabled(True)
+                self._update_domain_controls_enabled()
                 self._set_status_text(summarize_maintenance_status(result.label, result.message))
             if result.refresh_pages:
                 self.refresh_pages()
@@ -929,6 +1026,12 @@ def _create_desktop_window(config: DomainConfig, deps: dict[str, Any]) -> Any:
         def _set_maintenance_enabled(self, enabled: bool) -> None:
             for button in self.maintenance_buttons:
                 button.setEnabled(enabled)
+
+        def _update_domain_controls_enabled(self) -> None:
+            enabled = not self._agent_running and not self._maintenance_running
+            self.domain_combo.setEnabled(enabled)
+            self.domain_refresh_button.setEnabled(enabled)
+            self.domain_switch_button.setEnabled(enabled)
 
         def _set_status_text(self, message: str) -> None:
             self.status_label.setText(message)

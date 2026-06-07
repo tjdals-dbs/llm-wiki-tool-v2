@@ -25,6 +25,7 @@ from wiki_tool.desktop_gui import (
     summarize_maintenance_status,
     worker_failure_result,
     worker_success_result,
+    build_domain_runtime,
     build_page_navigation_items,
     navigation_item_flags,
     _graph_item_label,
@@ -138,6 +139,12 @@ class FakeAdapter:
         }
 
 
+class FakeDomainAdapter(FakeAdapter):
+    def __init__(self, config):
+        super().__init__()
+        self.config = config
+
+
 class FakeRoute:
     def __init__(self):
         self.calls = []
@@ -208,6 +215,18 @@ class DesktopGuiTests(unittest.TestCase):
         self.assertEqual(GUI_PANEL_WEIGHTS, (280, 796, 364))
         self.assertEqual(GUI_STYLE_COLORS["document_bg"], "#f7f7f5")
         self.assertEqual(GUI_GRAPH_TYPE_LABELS["concept"], "개념")
+
+    def test_domain_runtime_rebinds_adapter_presenter_and_task_specs_to_new_config(self):
+        class Config:
+            slug = "finance-private"
+
+        runtime = build_domain_runtime(Config(), adapter_factory=FakeDomainAdapter)
+
+        self.assertEqual(runtime.config.slug, "finance-private")
+        self.assertIs(runtime.adapter.config, runtime.config)
+        self.assertIs(runtime.presenter.adapter, runtime.adapter)
+        self.assertIs(runtime.maintenance_task_specs["scan"].task.__self__, runtime.presenter)
+        self.assertEqual(runtime.maintenance_task_specs["scan"].task.__name__, "scan_raw_sources")
 
     def test_page_navigation_groups_info_concepts_sources_and_logs_in_order(self):
         pages = [
