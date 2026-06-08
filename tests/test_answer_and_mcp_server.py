@@ -161,6 +161,21 @@ class AnswerAndMcpServerTests(unittest.TestCase):
             self.assertEqual(answer["codex_status"], "codex_invalid_answer")
             self.assertIn("missing_evidence", answer["fallback_reason"])
 
+    def test_answer_question_falls_back_safely_for_unsupported_provider(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            adapter = build_adapter(Path(tmp))
+
+            with patch.dict("os.environ", {"LLM_WIKI_AGENT_PROVIDER": "claude"}, clear=True), patch(
+                "wiki_tool.mcp_tools.CodexAgentBridge"
+            ) as bridge_cls:
+                answer = adapter.answer_question("CAPM은 무엇인가?")
+
+            bridge_cls.assert_not_called()
+            self.assertEqual(answer["provider"], "rule_based")
+            self.assertTrue(answer["fallback"])
+            self.assertEqual(answer["codex_status"], "unsupported_provider_fallback")
+            self.assertIn("claude", answer["fallback_reason"])
+
     def test_answer_question_uses_question_type_specific_style(self):
         with tempfile.TemporaryDirectory() as tmp:
             adapter = build_adapter(Path(tmp))

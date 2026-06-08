@@ -48,6 +48,31 @@ class AgentProviderConfigTests(unittest.TestCase):
         self.assertEqual(config.model, "")
         self.assertEqual(config.codex_command, DEFAULT_CODEX_COMMAND)
 
+    def test_role_config_auto_selects_codex_when_usable_without_explicit_provider(self):
+        config = load_agent_provider_config("answer", env={}, runner=FakeCliRunner({"codex.cmd"}))
+
+        self.assertEqual(config.provider, PROVIDER_CODEX)
+        self.assertTrue(config.uses_codex)
+        self.assertEqual(config.selection_reason, "auto_detected")
+
+    def test_role_config_uses_rule_based_when_no_cli_provider_is_usable(self):
+        config = load_agent_provider_config("answer", env={}, runner=FakeCliRunner())
+
+        self.assertEqual(config.provider, PROVIDER_RULE_BASED)
+        self.assertFalse(config.uses_codex)
+        self.assertEqual(config.selection_reason, "fallback")
+
+    def test_role_provider_override_wins_over_global_provider(self):
+        env = {
+            "LLM_WIKI_AGENT_PROVIDER": "codex",
+            "LLM_WIKI_ANSWER_PROVIDER": "rule_based",
+        }
+
+        config = load_agent_provider_config("answer", env, runner=FakeCliRunner({"codex.cmd"}))
+
+        self.assertEqual(config.provider, PROVIDER_RULE_BASED)
+        self.assertEqual(config.selection_reason, "explicit_env")
+
     def test_codex_provider_is_enabled_from_environment(self):
         env = {"LLM_WIKI_AGENT_PROVIDER": "codex"}
 

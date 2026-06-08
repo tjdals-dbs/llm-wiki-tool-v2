@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-from .agent_provider import PROVIDER_CODEX, load_agent_provider_config
+from .agent_provider import PROVIDER_CODEX, PROVIDER_RULE_BASED, load_agent_provider_config
 from .config import DomainConfig
 from .mcp_registry import create_tool_registry
 
@@ -46,7 +46,12 @@ class McpCodexAgentRoute:
 
     def ask(self, query: str) -> AgentRouteResult:
         provider = load_agent_provider_config("answer").provider
-        route = "mcp/codex" if provider == PROVIDER_CODEX else "mcp/rule_based"
+        if provider == PROVIDER_CODEX:
+            route = "mcp/codex"
+        elif provider == PROVIDER_RULE_BASED:
+            route = "mcp/rule_based"
+        else:
+            route = "mcp/unsupported-provider fallback"
         try:
             registry = self.registry_factory(self.config)
             answer_tool = registry["answer_question"]

@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping
 
-from .agent_provider import PROVIDER_CODEX, load_agent_provider_config
+from .agent_provider import PROVIDER_CODEX, PROVIDER_RULE_BASED, load_agent_provider_config
 from .codex_agent import CodexAgentBridge, CodexAgentResult
 
 
@@ -66,13 +66,18 @@ def _run_hook(
 ) -> AgentHookResult:
     config = load_agent_provider_config(role, env)
     if config.provider != PROVIDER_CODEX:
+        unsupported = config.provider != PROVIDER_RULE_BASED
         return AgentHookResult(
             role=role,
             provider="rule_based",
             fallback=True,
-            status="rule_based_fallback",
+            status="unsupported_provider_fallback" if unsupported else "rule_based_fallback",
             draft="",
-            error="Codex provider가 설정되지 않아 기존 rule-based pipeline을 사용합니다.",
+            error=(
+                f"{config.provider} provider는 아직 실행 adapter가 없어 rule-based fallback을 사용합니다."
+                if unsupported
+                else "Codex provider가 설정되지 않아 기존 rule-based pipeline을 사용합니다."
+            ),
         )
 
     bridge = bridge_factory(config)

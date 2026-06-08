@@ -6,7 +6,7 @@ from pathlib import Path
 from urllib.parse import unquote
 
 from .agent_hooks import AgentHookResult, draft_concept_update_with_agent
-from .agent_provider import PROVIDER_CODEX, resolve_agent_provider
+from .agent_provider import PROVIDER_CODEX, PROVIDER_RULE_BASED, load_agent_provider_config
 from .concept_filter import clean_candidate_concept, filter_candidate_concepts, is_valid_candidate_concept
 from .config import DomainConfig
 from .manifest import ManifestEntry, read_manifest, write_manifest
@@ -29,7 +29,9 @@ def organize_pending_sources(config: DomainConfig, limit: int | None = None) -> 
     merged_count = 0
     dropped_count = 0
     skipped_count = 0
-    provider = resolve_agent_provider()
+    provider_config = load_agent_provider_config("concept")
+    provider = provider_config.provider if provider_config.provider == PROVIDER_CODEX else PROVIDER_RULE_BASED
+    unsupported_provider = provider_config.provider not in {PROVIDER_CODEX, PROVIDER_RULE_BASED}
     codex_used_count = 0
     fallback_count = 0
     processed = 0
@@ -78,7 +80,7 @@ def organize_pending_sources(config: DomainConfig, limit: int | None = None) -> 
                     merged = _merge_codex_concept_page(existing, hook_result.draft, source_link, evidence)
                     codex_used_count += 1
                 else:
-                    if provider == PROVIDER_CODEX:
+                    if provider == PROVIDER_CODEX or unsupported_provider:
                         fallback_count += 1
                     merged = _merge_concept_page(existing, source_link, evidence)
                 if merged != existing:
@@ -96,18 +98,23 @@ def organize_pending_sources(config: DomainConfig, limit: int | None = None) -> 
                     )
                     codex_used_count += 1
                 else:
-                    if provider == PROVIDER_CODEX:
+                    if provider == PROVIDER_CODEX or unsupported_provider:
                         fallback_count += 1
                     reason = ""
                     status = ""
                     if hook_result is not None:
                         reason = hook_result.error or str(validation["reason"])
                         status = hook_result.status
+                    elif unsupported_provider:
+                        reason = (
+                            f"{provider_config.provider} provider는 아직 실행 adapter가 없어 rule-based concept page를 사용합니다."
+                        )
+                        status = "unsupported_provider_fallback"
                     concept_page = _with_concept_pipeline_metadata(
                         _render_concept_page(concept_name, source, source_link),
-                        provider=provider,
+                        provider=provider_config.provider if unsupported_provider else provider,
                         codex_status=status,
-                        fallback=provider == PROVIDER_CODEX,
+                        fallback=provider == PROVIDER_CODEX or unsupported_provider,
                         fallback_reason=reason,
                     )
                 concept_path.write_text(concept_page, encoding="utf-8")

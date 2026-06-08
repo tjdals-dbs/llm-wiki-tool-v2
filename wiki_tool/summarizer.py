@@ -6,7 +6,7 @@ from pathlib import Path
 
 from .config import DomainConfig
 from .agent_hooks import AgentHookResult, draft_source_summary_with_agent
-from .agent_provider import PROVIDER_CODEX, resolve_agent_provider
+from .agent_provider import PROVIDER_CODEX, PROVIDER_RULE_BASED, load_agent_provider_config
 from .concept_filter import clean_candidate_concept, filter_candidate_concepts, is_valid_candidate_concept
 from .extractors import ExtractedSource, extract_source
 from .manifest import ManifestEntry, read_manifest, write_manifest
@@ -45,7 +45,9 @@ def summarize_new_sources(config: DomainConfig, limit: int | None = None) -> Sou
     summarized_count = 0
     needs_review_count = 0
     skipped_count = 0
-    provider = resolve_agent_provider()
+    provider_config = load_agent_provider_config("ingest")
+    provider = provider_config.provider if provider_config.provider == PROVIDER_CODEX else PROVIDER_RULE_BASED
+    unsupported_provider = provider_config.provider not in {PROVIDER_CODEX, PROVIDER_RULE_BASED}
     codex_used_count = 0
     fallback_count = 0
     processed = 0
@@ -100,6 +102,18 @@ def summarize_new_sources(config: DomainConfig, limit: int | None = None) -> Sou
                     fallback=True,
                     fallback_reason=reason,
                 )
+        elif unsupported_provider:
+            fallback_count += 1
+            source_content = _with_source_pipeline_metadata(
+                rule_based_page,
+                entry,
+                provider=provider_config.provider,
+                codex_status="unsupported_provider_fallback",
+                fallback=True,
+                fallback_reason=(
+                    f"{provider_config.provider} provider는 아직 실행 adapter가 없어 rule-based summary를 사용합니다."
+                ),
+            )
         source_page.write_text(source_content, encoding="utf-8")
 
         relative_source_page = source_page.relative_to(config.root).as_posix()

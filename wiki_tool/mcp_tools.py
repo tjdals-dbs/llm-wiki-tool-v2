@@ -10,7 +10,7 @@ from .agent_hooks import (
     draft_source_summary_with_agent as hook_draft_source_summary_with_agent,
     review_wiki_changes_with_agent as hook_review_wiki_changes_with_agent,
 )
-from .agent_provider import PROVIDER_CODEX, load_agent_provider_config
+from .agent_provider import PROVIDER_CODEX, PROVIDER_RULE_BASED, load_agent_provider_config
 from .codex_agent import CodexAgentBridge
 from .config import DomainConfig
 from .graph import build_wiki_graph, get_related_pages as graph_related_pages
@@ -107,6 +107,15 @@ class WikiToolAdapter:
             fallback["fallback_reason"] = codex_result.error or f"Codex answer draft invalid: {validation_error}"
             fallback["codex_status"] = codex_result.status if not validation_error else "codex_invalid_answer"
             return fallback
+        if provider_config.provider != PROVIDER_RULE_BASED:
+            answer = self._answer_question_rule_based(query)
+            answer["provider"] = "rule_based"
+            answer["fallback"] = True
+            answer["fallback_reason"] = (
+                f"{provider_config.provider} provider는 아직 실행 adapter가 없어 rule-based fallback을 사용합니다."
+            )
+            answer["codex_status"] = "unsupported_provider_fallback"
+            return answer
         answer = self._answer_question_rule_based(query)
         answer["provider"] = "rule_based"
         answer["fallback"] = False

@@ -56,6 +56,21 @@ class AgentHookTests(unittest.TestCase):
         self.assertTrue(result.fallback)
         self.assertEqual(result.status, "rule_based_fallback")
 
+    def test_unsupported_provider_uses_rule_based_fallback_without_bridge_call(self):
+        def fail_factory(_config):
+            raise AssertionError("unsupported provider must not create a bridge")
+
+        result = draft_source_summary_with_agent(
+            "raw text",
+            env={"LLM_WIKI_AGENT_PROVIDER": "claude"},
+            bridge_factory=fail_factory,
+        )
+
+        self.assertEqual(result.provider, "rule_based")
+        self.assertTrue(result.fallback)
+        self.assertEqual(result.status, "unsupported_provider_fallback")
+        self.assertIn("claude", result.error)
+
     def test_ingest_and_concept_hooks_call_codex_when_provider_enabled(self):
         created = []
 
