@@ -2,7 +2,6 @@ import unittest
 
 from wiki_tool.agent_provider import (
     DEFAULT_CODEX_COMMAND,
-    PROVIDER_CLAUDE,
     PROVIDER_CODEX,
     PROVIDER_GEMINI,
     PROVIDER_RULE_BASED,
@@ -97,13 +96,13 @@ class AgentProviderConfigTests(unittest.TestCase):
         self.assertEqual(resolve_codex_command({"LLM_WIKI_CODEX_COMMAND": "codex"}), "codex")
 
     def test_explicit_provider_environment_wins_over_auto_detection(self):
-        env = {"LLM_WIKI_AGENT_PROVIDER": "claude", "LLM_WIKI_CLAUDE_COMMAND": "claude-custom"}
+        env = {"LLM_WIKI_AGENT_PROVIDER": "gemini", "LLM_WIKI_GEMINI_COMMAND": "gemini-custom"}
         runner = FakeCliRunner()
 
         selected = select_agent_provider(env=env, runner=runner)
 
-        self.assertEqual(selected.provider, PROVIDER_CLAUDE)
-        self.assertEqual(selected.command, "claude-custom")
+        self.assertEqual(selected.provider, PROVIDER_GEMINI)
+        self.assertEqual(selected.command, "gemini-custom")
         self.assertEqual(selected.selection_reason, "explicit_env")
 
     def test_auto_detection_selects_codex_when_usable_without_explicit_provider(self):
@@ -115,11 +114,9 @@ class AgentProviderConfigTests(unittest.TestCase):
         self.assertTrue(selected.usable)
         self.assertEqual(selected.selection_reason, "auto_detected")
 
-    def test_auto_detection_falls_through_to_claude_then_gemini(self):
-        claude_selected = select_agent_provider(env={}, runner=FakeCliRunner({"claude"}))
+    def test_auto_detection_falls_through_to_gemini(self):
         gemini_selected = select_agent_provider(env={}, runner=FakeCliRunner({"gemini"}))
 
-        self.assertEqual(claude_selected.provider, PROVIDER_CLAUDE)
         self.assertEqual(gemini_selected.provider, PROVIDER_GEMINI)
 
     def test_auto_detection_uses_rule_based_when_all_cli_providers_fail(self):
@@ -156,7 +153,7 @@ class AgentProviderConfigTests(unittest.TestCase):
         select_agent_provider(env={}, runner=runner)
 
         self.assertTrue(runner.calls)
-        self.assertTrue(all(call[0] in {"codex.cmd", "claude", "gemini"} for call in runner.calls))
+        self.assertTrue(all(call[0] in {"codex.cmd", "gemini"} for call in runner.calls))
 
 
 if __name__ == "__main__":

@@ -5,7 +5,6 @@ from pathlib import Path
 from unittest.mock import patch
 
 from wiki_tool.config import load_domain_config
-from wiki_tool.claude_agent import ClaudeAgentResult
 from wiki_tool.codex_agent import CodexAgentResult
 from wiki_tool.mcp_server import create_fastmcp_server, register_mcp_tools
 from wiki_tool.mcp_tools import WikiToolAdapter
@@ -168,70 +167,14 @@ class AnswerAndMcpServerTests(unittest.TestCase):
 
             with patch.dict("os.environ", {"LLM_WIKI_AGENT_PROVIDER": "gemini"}, clear=True), patch(
                 "wiki_tool.mcp_tools.CodexAgentBridge"
-            ) as bridge_cls, patch("wiki_tool.mcp_tools.ClaudeAgentBridge") as claude_bridge_cls:
+            ) as bridge_cls:
                 answer = adapter.answer_question("CAPM은 무엇인가?")
 
             bridge_cls.assert_not_called()
-            claude_bridge_cls.assert_not_called()
             self.assertEqual(answer["provider"], "rule_based")
             self.assertTrue(answer["fallback"])
             self.assertEqual(answer["codex_status"], "unsupported_provider_fallback")
             self.assertIn("gemini", answer["fallback_reason"])
-
-    def test_answer_question_uses_claude_provider_when_enabled(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            adapter = build_adapter(Path(tmp))
-            claude_result = ClaudeAgentResult(
-                ok=True,
-                status="ok",
-                answer="Claude가 MCP wiki tools 근거로 답했습니다.",
-                used_pages=[{"path": "wiki/concepts/capm.md"}],
-                related_pages=[],
-                evidence=[{"path": "wiki/concepts/capm.md", "text": "CAPM 근거"}],
-            )
-
-            with patch.dict(
-                "os.environ",
-                {"LLM_WIKI_AGENT_PROVIDER": "claude", "LLM_WIKI_ANSWER_MODEL": "answer-model"},
-                clear=True,
-            ), patch("wiki_tool.mcp_tools.ClaudeAgentBridge") as bridge_cls, patch(
-                "wiki_tool.mcp_tools.CodexAgentBridge"
-            ) as codex_bridge_cls:
-                bridge_cls.return_value.run_answer.return_value = claude_result
-                answer = adapter.answer_question("CAPM은 무엇인가?")
-
-            codex_bridge_cls.assert_not_called()
-            self.assertEqual(answer["provider"], "claude")
-            self.assertFalse(answer["fallback"])
-            self.assertIn("Claude가", answer["answer"])
-            call = bridge_cls.return_value.run_answer.call_args
-            self.assertEqual(call.args, ("CAPM은 무엇인가?",))
-            self.assertIn("wiki_context", call.kwargs)
-            self.assertIn("evidence", call.kwargs)
-
-    def test_answer_question_falls_back_when_claude_fails_or_returns_invalid_json(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            adapter = build_adapter(Path(tmp))
-            claude_result = ClaudeAgentResult(
-                ok=False,
-                status="claude_invalid_json",
-                answer="",
-                used_pages=[],
-                related_pages=[],
-                evidence=[],
-                error="Claude CLI 응답에서 JSON 객체를 찾지 못했습니다.",
-            )
-
-            with patch.dict("os.environ", {"LLM_WIKI_AGENT_PROVIDER": "claude"}, clear=True), patch(
-                "wiki_tool.mcp_tools.ClaudeAgentBridge"
-            ) as bridge_cls:
-                bridge_cls.return_value.run_answer.return_value = claude_result
-                answer = adapter.answer_question("CAPM은 무엇인가?")
-
-            self.assertEqual(answer["provider"], "rule_based")
-            self.assertTrue(answer["fallback"])
-            self.assertEqual(answer["claude_status"], "claude_invalid_json")
-            self.assertIn("Claude CLI", answer["fallback_reason"])
 
     def test_answer_question_uses_question_type_specific_style(self):
         with tempfile.TemporaryDirectory() as tmp:

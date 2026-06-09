@@ -10,8 +10,7 @@ from .agent_hooks import (
     draft_source_summary_with_agent as hook_draft_source_summary_with_agent,
     review_wiki_changes_with_agent as hook_review_wiki_changes_with_agent,
 )
-from .agent_provider import PROVIDER_CLAUDE, PROVIDER_CODEX, PROVIDER_RULE_BASED, load_agent_provider_config
-from .claude_agent import ClaudeAgentBridge
+from .agent_provider import PROVIDER_CODEX, PROVIDER_RULE_BASED, load_agent_provider_config
 from .codex_agent import CodexAgentBridge
 from .config import DomainConfig
 from .graph import build_wiki_graph, get_related_pages as graph_related_pages
@@ -107,21 +106,6 @@ class WikiToolAdapter:
             fallback["fallback"] = True
             fallback["fallback_reason"] = codex_result.error or f"Codex answer draft invalid: {validation_error}"
             fallback["codex_status"] = codex_result.status if not validation_error else "codex_invalid_answer"
-            return fallback
-        if provider_config.provider == PROVIDER_CLAUDE:
-            context = self.ask_wiki_context(query, limit=5)
-            evidence = self._collect_answer_evidence(query, context)
-            claude_result = ClaudeAgentBridge(provider_config).run_answer(query, wiki_context=context, evidence=evidence)
-            validation_error = _codex_answer_validation_error(claude_result, evidence)
-            if claude_result.ok and not validation_error:
-                payload = claude_result.to_answer_payload()
-                payload["fallback"] = False
-                return payload
-            fallback = self._answer_question_rule_based(query, context=context, evidence=evidence)
-            fallback["provider"] = "rule_based"
-            fallback["fallback"] = True
-            fallback["fallback_reason"] = claude_result.error or f"Claude answer draft invalid: {validation_error}"
-            fallback["claude_status"] = claude_result.status if not validation_error else "claude_invalid_answer"
             return fallback
         if provider_config.provider != PROVIDER_RULE_BASED:
             answer = self._answer_question_rule_based(query)

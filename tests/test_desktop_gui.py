@@ -623,16 +623,16 @@ class DesktopGuiTests(unittest.TestCase):
         self.assertIn("concept: codex / gpt-5.5", status.detail_lines)
         self.assertIn("review: codex / gpt-5.5", status.detail_lines)
 
-    def test_agent_provider_status_marks_unsupported_claude_roles_as_fallback(self):
+    def test_agent_provider_status_marks_unsupported_gemini_roles_as_fallback(self):
         env = {
-            "LLM_WIKI_AGENT_PROVIDER": "claude",
-            "LLM_WIKI_AGENT_MODEL": "claude-sonnet-4.5",
+            "LLM_WIKI_AGENT_PROVIDER": "gemini",
+            "LLM_WIKI_AGENT_MODEL": "gemini-pro",
         }
 
         status = build_agent_provider_panel_status(env=env)
 
-        self.assertEqual(status.summary, "agent: claude / claude-sonnet-4.5")
-        self.assertIn("answer: claude / claude-sonnet-4.5", status.detail_lines)
+        self.assertEqual(status.summary, "agent: rule_based fallback")
+        self.assertIn("answer: rule_based fallback", status.detail_lines)
         self.assertIn("ingest: rule_based fallback", status.detail_lines)
         self.assertIn("concept: rule_based fallback", status.detail_lines)
         self.assertIn("review: rule_based fallback", status.detail_lines)

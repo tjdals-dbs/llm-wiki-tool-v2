@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from .agent_provider import (
-    PROVIDER_CLAUDE,
     PROVIDER_CODEX,
     PROVIDER_GEMINI,
     PROVIDER_RULE_BASED,
@@ -20,7 +19,6 @@ AGENT_PROVIDER_ROLES = ("answer", "ingest", "concept", "review")
 AGENT_PROVIDER_DETAIL_DEFAULT_VISIBLE = False
 AGENT_PROVIDER_SUPPORTED_ROLES = {
     PROVIDER_CODEX: frozenset(AGENT_PROVIDER_ROLES),
-    PROVIDER_CLAUDE: frozenset({"answer"}),
     PROVIDER_GEMINI: frozenset(),
     PROVIDER_RULE_BASED: frozenset(AGENT_PROVIDER_ROLES),
 }
@@ -119,8 +117,6 @@ class McpCodexAgentRoute:
         provider = load_agent_provider_config("answer").provider
         if provider == PROVIDER_CODEX:
             route = "mcp/codex"
-        elif provider == PROVIDER_CLAUDE:
-            route = "mcp/claude"
         elif provider == PROVIDER_RULE_BASED:
             route = "mcp/rule_based"
         else:
