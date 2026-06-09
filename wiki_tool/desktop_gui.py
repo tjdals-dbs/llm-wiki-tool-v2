@@ -27,12 +27,16 @@ from .desktop_navigation import (
     resolve_wiki_link,
 )
 from .desktop_presenter import (
+    AGENT_PROVIDER_DETAIL_DEFAULT_VISIBLE,
     AgentRouteResult,
     DesktopGuiPresenter,
     DirectAdapterAgentFallback,
     McpCodexAgentRoute,
     _agent_route_line,
+    agent_provider_detail_toggle_label,
+    build_agent_provider_panel_status,
     format_maintenance_report,
+    toggle_agent_provider_detail_visible,
 )
 from .desktop_runtime import (
     ADVANCED_MAINTENANCE_DEFAULT_VISIBLE,
@@ -334,6 +338,7 @@ def _create_desktop_window(config: DomainConfig, deps: dict[str, Any]) -> Any:
             self._agent_running = False
             self._maintenance_running = False
             self._full_status_message = "준비됨"
+            self._agent_provider_detail_visible = AGENT_PROVIDER_DETAIL_DEFAULT_VISIBLE
             self.maintenance_buttons: list[Any] = []
             self.setWindowTitle("LLM Wiki Tool v2")
             self.resize(1440, 840)
@@ -345,6 +350,8 @@ def _create_desktop_window(config: DomainConfig, deps: dict[str, Any]) -> Any:
             super().resizeEvent(event)
             if hasattr(self, "status_label"):
                 self._refresh_status_text_elision()
+            if hasattr(self, "agent_provider_summary_label"):
+                self._refresh_agent_provider_status()
 
         def _build_layout(self) -> None:
             splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -439,6 +446,26 @@ def _create_desktop_window(config: DomainConfig, deps: dict[str, Any]) -> Any:
             self.route_label = QLabel("agent route: 준비됨")
             self.route_label.setObjectName("RouteLabel")
             layout.addWidget(self.route_label)
+
+            provider_row = QHBoxLayout()
+            provider_row.setContentsMargins(0, 0, 0, 0)
+            provider_row.setSpacing(6)
+            self.agent_provider_summary_label = QLabel("")
+            self.agent_provider_summary_label.setObjectName("AgentProviderSummary")
+            configure_status_label(self.agent_provider_summary_label, height=24)
+            provider_row.addWidget(self.agent_provider_summary_label, stretch=1)
+            self.agent_provider_detail_toggle = QPushButton(agent_provider_detail_toggle_label(self._agent_provider_detail_visible))
+            self.agent_provider_detail_toggle.setObjectName("InlineToggleButton")
+            self.agent_provider_detail_toggle.clicked.connect(self._toggle_agent_provider_detail)
+            provider_row.addWidget(self.agent_provider_detail_toggle)
+            layout.addLayout(provider_row)
+
+            self.agent_provider_detail_label = QLabel("")
+            self.agent_provider_detail_label.setObjectName("AgentProviderDetail")
+            self.agent_provider_detail_label.setWordWrap(True)
+            self.agent_provider_detail_label.setVisible(self._agent_provider_detail_visible)
+            layout.addWidget(self.agent_provider_detail_label)
+            self._refresh_agent_provider_status()
 
             maintenance = QFrame()
             maintenance.setObjectName("MaintenanceBox")
@@ -597,6 +624,8 @@ def _create_desktop_window(config: DomainConfig, deps: dict[str, Any]) -> Any:
             self._pending_agent_message_index = None
             self.search_input.clear()
             self.route_label.setText("agent route: 준비됨")
+            self._agent_provider_detail_visible = AGENT_PROVIDER_DETAIL_DEFAULT_VISIBLE
+            self._refresh_agent_provider_status()
             self._set_status_text(status_message or f"도메인 전환 완료: {config.name} ({config.slug})")
             self._render_chat_log()
             self.refresh_domain_options()
@@ -762,6 +791,7 @@ def _create_desktop_window(config: DomainConfig, deps: dict[str, Any]) -> Any:
                 self._maintenance_running = False
                 self._set_maintenance_enabled(True)
                 self._update_domain_controls_enabled()
+                self._refresh_agent_provider_status()
                 self._set_status_text(summarize_maintenance_status(result.label, result.message))
             if result.refresh_pages:
                 self.refresh_pages()
@@ -795,6 +825,28 @@ def _create_desktop_window(config: DomainConfig, deps: dict[str, Any]) -> Any:
         def _refresh_status_text_elision(self) -> None:
             tooltip_targets = (self.status_bar,) if hasattr(self, "status_bar") else ()
             set_elided_status_text(self.status_label, self._full_status_message, tooltip_targets=tooltip_targets)
+
+        def _toggle_agent_provider_detail(self) -> None:
+            self._agent_provider_detail_visible = toggle_agent_provider_detail_visible(self._agent_provider_detail_visible)
+            self.agent_provider_detail_label.setVisible(self._agent_provider_detail_visible)
+            self.agent_provider_detail_toggle.setText(agent_provider_detail_toggle_label(self._agent_provider_detail_visible))
+            self._refresh_agent_provider_status()
+
+        def _refresh_agent_provider_status(self) -> None:
+            status = build_agent_provider_panel_status()
+            self.agent_provider_detail_label.setText("\n".join(status.detail_lines))
+            self.agent_provider_detail_label.setToolTip(status.tooltip)
+            self.agent_provider_detail_toggle.setText(agent_provider_detail_toggle_label(self._agent_provider_detail_visible))
+            set_elided_status_text(
+                self.agent_provider_summary_label,
+                status.summary,
+                fallback_width=260,
+                min_elide_width=60,
+                tooltip_targets=(self.agent_provider_detail_toggle,),
+            )
+            tooltip = f"{status.summary}\n\n" + status.tooltip
+            self.agent_provider_summary_label.setToolTip(tooltip)
+            self.agent_provider_detail_toggle.setToolTip(tooltip)
 
         def _render_chat_log(self) -> None:
             self.chat_log.setHtml(render_chat_messages_html(self._chat_messages))

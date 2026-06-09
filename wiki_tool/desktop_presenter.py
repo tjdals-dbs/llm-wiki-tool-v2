@@ -3,11 +3,27 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
-from .agent_provider import PROVIDER_CLAUDE, PROVIDER_CODEX, PROVIDER_RULE_BASED, load_agent_provider_config
+from .agent_provider import (
+    PROVIDER_CLAUDE,
+    PROVIDER_CODEX,
+    PROVIDER_GEMINI,
+    PROVIDER_RULE_BASED,
+    load_agent_provider_config,
+)
 from .config import DomainConfig
 from .mcp_registry import create_tool_registry
+
+
+AGENT_PROVIDER_ROLES = ("answer", "ingest", "concept", "review")
+AGENT_PROVIDER_DETAIL_DEFAULT_VISIBLE = False
+AGENT_PROVIDER_SUPPORTED_ROLES = {
+    PROVIDER_CODEX: frozenset(AGENT_PROVIDER_ROLES),
+    PROVIDER_CLAUDE: frozenset({"answer"}),
+    PROVIDER_GEMINI: frozenset(),
+    PROVIDER_RULE_BASED: frozenset(AGENT_PROVIDER_ROLES),
+}
 
 
 @dataclass(frozen=True)
@@ -19,6 +35,61 @@ class AgentRouteResult:
     related_pages: list[dict[str, Any]]
     error: str | None = None
     fallback_reason: str | None = None
+
+
+@dataclass(frozen=True)
+class AgentProviderRoleStatus:
+    role: str
+    provider: str
+    model: str = ""
+    fallback: bool = False
+
+    @property
+    def text(self) -> str:
+        provider_text = self.provider
+        if self.model:
+            provider_text = f"{provider_text} / {self.model}"
+        if self.fallback:
+            provider_text = f"{provider_text} fallback"
+        return f"{self.role}: {provider_text}"
+
+
+@dataclass(frozen=True)
+class AgentProviderPanelStatus:
+    summary: str
+    detail_lines: list[str]
+    tooltip: str
+    roles: list[AgentProviderRoleStatus]
+
+
+def build_agent_provider_panel_status(env: Mapping[str, str] | None = None) -> AgentProviderPanelStatus:
+    roles = [_agent_provider_role_status(role, env=env) for role in AGENT_PROVIDER_ROLES]
+    answer = roles[0]
+    summary_provider = answer.provider
+    summary_model = answer.model
+    summary = f"agent: {summary_provider}"
+    if summary_model:
+        summary = f"{summary} / {summary_model}"
+    if answer.fallback:
+        summary = f"{summary} fallback"
+    detail_lines = [role.text for role in roles]
+    return AgentProviderPanelStatus(summary=summary, detail_lines=detail_lines, tooltip="\n".join(detail_lines), roles=roles)
+
+
+def toggle_agent_provider_detail_visible(current_visible: bool) -> bool:
+    return not current_visible
+
+
+def agent_provider_detail_toggle_label(visible: bool) -> str:
+    return "접기" if visible else "자세히"
+
+
+def _agent_provider_role_status(role: str, *, env: Mapping[str, str] | None = None) -> AgentProviderRoleStatus:
+    config = load_agent_provider_config(role, env=env)
+    supported_roles = AGENT_PROVIDER_SUPPORTED_ROLES.get(config.provider, frozenset())
+    if role not in supported_roles:
+        return AgentProviderRoleStatus(role=role, provider=PROVIDER_RULE_BASED, fallback=True)
+    return AgentProviderRoleStatus(role=role, provider=config.provider, model=config.model)
 
 
 class DirectAdapterAgentFallback:

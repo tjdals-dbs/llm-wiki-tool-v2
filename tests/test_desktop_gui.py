@@ -11,6 +11,7 @@ from wiki_tool.desktop_gui import (
     GUI_PANEL_WEIGHTS,
     GUI_STYLE_COLORS,
     AgentRouteResult,
+    AGENT_PROVIDER_DETAIL_DEFAULT_VISIBLE,
     DesktopGuiPresenter,
     DirectAdapterAgentFallback,
     DomainCreationRequest,
@@ -20,15 +21,18 @@ from wiki_tool.desktop_gui import (
     _agent_route_line,
     append_agent_exchange,
     build_agent_pending_message,
+    build_agent_provider_panel_status,
     build_maintenance_pending_message,
     create_gui_user_domain,
     domain_controls_enabled,
+    agent_provider_detail_toggle_label,
     advanced_maintenance_default_visible,
     advanced_maintenance_toggle_label,
     build_maintenance_task_specs,
     maintenance_controls_enabled,
     open_domain_raw_folder,
     primary_maintenance_task_spec,
+    toggle_agent_provider_detail_visible,
     toggle_advanced_maintenance_visible,
     render_chat_messages_html,
     replace_chat_message,
@@ -604,6 +608,55 @@ class DesktopGuiTests(unittest.TestCase):
 
         self.assertIn("답변 생성 중", message)
         self.assertIn("agent route: 실행 중", message)
+
+    def test_agent_provider_status_summarizes_codex_roles(self):
+        env = {
+            "LLM_WIKI_AGENT_PROVIDER": "codex",
+            "LLM_WIKI_AGENT_MODEL": "gpt-5.5",
+        }
+
+        status = build_agent_provider_panel_status(env=env)
+
+        self.assertEqual(status.summary, "agent: codex / gpt-5.5")
+        self.assertIn("answer: codex / gpt-5.5", status.detail_lines)
+        self.assertIn("ingest: codex / gpt-5.5", status.detail_lines)
+        self.assertIn("concept: codex / gpt-5.5", status.detail_lines)
+        self.assertIn("review: codex / gpt-5.5", status.detail_lines)
+
+    def test_agent_provider_status_marks_unsupported_claude_roles_as_fallback(self):
+        env = {
+            "LLM_WIKI_AGENT_PROVIDER": "claude",
+            "LLM_WIKI_AGENT_MODEL": "claude-sonnet-4.5",
+        }
+
+        status = build_agent_provider_panel_status(env=env)
+
+        self.assertEqual(status.summary, "agent: claude / claude-sonnet-4.5")
+        self.assertIn("answer: claude / claude-sonnet-4.5", status.detail_lines)
+        self.assertIn("ingest: rule_based fallback", status.detail_lines)
+        self.assertIn("concept: rule_based fallback", status.detail_lines)
+        self.assertIn("review: rule_based fallback", status.detail_lines)
+
+    def test_agent_provider_status_summarizes_rule_based_without_model(self):
+        status = build_agent_provider_panel_status(env={"LLM_WIKI_AGENT_PROVIDER": "rule_based"})
+
+        self.assertEqual(status.summary, "agent: rule_based")
+        self.assertEqual(
+            status.detail_lines,
+            [
+                "answer: rule_based",
+                "ingest: rule_based",
+                "concept: rule_based",
+                "review: rule_based",
+            ],
+        )
+
+    def test_agent_provider_detail_toggle_defaults_collapsed(self):
+        self.assertFalse(AGENT_PROVIDER_DETAIL_DEFAULT_VISIBLE)
+        self.assertTrue(toggle_agent_provider_detail_visible(False))
+        self.assertFalse(toggle_agent_provider_detail_visible(True))
+        self.assertEqual(agent_provider_detail_toggle_label(False), "자세히")
+        self.assertEqual(agent_provider_detail_toggle_label(True), "접기")
 
     def test_chat_question_adds_user_and_assistant_pending_messages(self):
         messages = []

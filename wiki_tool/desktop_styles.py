@@ -135,6 +135,29 @@ def stylesheet() -> str:
         padding: 6px 8px;
         font-weight: 600;
     }}
+    QLabel#AgentProviderSummary {{
+        color: {GUI_STYLE_COLORS["muted"]};
+        font-size: 12px;
+        padding: 0 2px;
+    }}
+    QLabel#AgentProviderDetail {{
+        color: {GUI_STYLE_COLORS["muted"]};
+        font-size: 11px;
+        line-height: 1.35;
+        padding: 0 2px 4px 2px;
+    }}
+    QPushButton#InlineToggleButton {{
+        background: transparent;
+        border: 0;
+        color: {GUI_STYLE_COLORS["accent"]};
+        padding: 2px 4px;
+        font-size: 12px;
+        font-weight: 600;
+    }}
+    QPushButton#InlineToggleButton:hover {{
+        background: #e8eef9;
+        border-radius: 5px;
+    }}
     QLineEdit {{
         background: {GUI_STYLE_COLORS["surface"]};
         border: 1px solid {GUI_STYLE_COLORS["border"]};
