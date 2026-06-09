@@ -64,6 +64,7 @@ class FakeAdapter:
             "skipped_count": 2,
             "codex_used_count": 1,
             "fallback_count": 0,
+            "navigation_refreshed": True,
         }
 
     def organize_pending_sources(self):
@@ -76,6 +77,7 @@ class FakeAdapter:
             "dropped_count": 0,
             "codex_used_count": 1,
             "fallback_count": 1,
+            "navigation_refreshed": True,
         }
 
     def run_wiki_lint(self):
@@ -775,6 +777,7 @@ class DesktopGuiTests(unittest.TestCase):
         self.assertIn("source summary: provider codex, 요약 1개, Codex 1개, fallback 0개, 검토 필요 0개", status)
         self.assertIn("concept organize: provider codex, 승격 1개, 병합 0개, 건너뜀 0개, Codex 1개, fallback 1개", status)
         self.assertIn("lint: 통과, issue 0개", status)
+        self.assertIn("navigation: 갱신", status)
         self.assertIn("안전성: raw 불변성 확인 불가, lint 통과, fallback 발생", status)
         self.assertIn("산출물: source 1개, concept 변경 1개, graph node 2개, edge 0개", status)
         self.assertIn("원인:", status)

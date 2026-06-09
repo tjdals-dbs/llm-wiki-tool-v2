@@ -5,7 +5,6 @@ from typing import Any
 from .agent_hooks import AgentHookResult, review_wiki_changes_with_agent
 from .config import DomainConfig
 from .mcp_tools import WikiToolAdapter
-from .navigation import refresh_navigation_pages
 
 
 def run_maintenance_once(config: DomainConfig) -> dict[str, Any]:
@@ -13,7 +12,6 @@ def run_maintenance_once(config: DomainConfig) -> dict[str, Any]:
     scan = adapter.scan_raw_sources()
     summarize = adapter.summarize_new_sources()
     organize = adapter.organize_pending_sources()
-    refresh_navigation_pages(config)
     review = _review_pipeline_if_codex_used(config, summarize, organize)
     lint = adapter.run_wiki_lint()
     return {

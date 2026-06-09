@@ -101,22 +101,26 @@ class DesktopGuiPresenter:
 
     def summarize_new_sources(self) -> str:
         result = self.adapter.summarize_new_sources()
+        navigation = " navigation 갱신" if result.get("navigation_refreshed") else ""
         return (
             "source 요약 완료: "
             f"요약 {result.get('summarized_count', 0)}개, "
             f"Codex {result.get('codex_used_count', 0)}개, "
             f"fallback {result.get('fallback_count', 0)}개, "
             f"검토 필요 {result.get('needs_review_count', 0)}개"
+            f"{navigation}"
         )
 
     def organize_pending_sources(self) -> str:
         result = self.adapter.organize_pending_sources()
+        navigation = " navigation 갱신" if result.get("navigation_refreshed") else ""
         return (
             "concept 조직 완료: "
             f"승격 {result.get('promoted_count', 0)}개, "
             f"병합 {result.get('merged_count', 0)}개, "
             f"보류 {result.get('skipped_count', result.get('dropped_count', 0))}개, "
             f"fallback {result.get('fallback_count', 0)}개"
+            f"{navigation}"
         )
 
     def run_wiki_lint(self) -> str:
@@ -248,6 +252,8 @@ def format_maintenance_report(
     unchanged_count = max(scanned_count - new_count - changed_count, 0)
     lint_status = "통과" if lint_ok else "실패"
     fallback_status = "fallback 발생" if fallback_count else "fallback 없음"
+    navigation_refreshed = bool(summarize.get("navigation_refreshed") or organize.get("navigation_refreshed"))
+    navigation_status = "갱신" if navigation_refreshed else "실행 안 함"
 
     lines = [
         "Maintenance Run Report",
@@ -272,6 +278,7 @@ def format_maintenance_report(
             f"fallback {concept_fallback}개"
         ),
         f"lint: {lint_status}, issue {len(lint_issues)}개",
+        f"navigation: {navigation_status}",
         f"안전성: {raw_integrity}, lint {lint_status}, {fallback_status}",
         (
             "산출물: "

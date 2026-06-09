@@ -189,12 +189,23 @@ class WikiToolAdapter:
 
     def summarize_new_sources(self, limit: int | None = None) -> dict[str, Any]:
         result = core_summarize_new_sources(self.config, limit=limit)
-        return {"message": "source summary 생성 완료", **asdict(result)}
+        refreshed = False
+        if int(result.summarized_count or 0) + int(result.needs_review_count or 0) > 0:
+            self.refresh_navigation_pages()
+            refreshed = True
+        return {"message": "source summary 생성 완료", **asdict(result), "navigation_refreshed": refreshed}
 
     def organize_pending_sources(self, limit: int | None = None) -> dict[str, Any]:
         result = core_organize_pending_sources(self.config, limit=limit)
         build_wiki_graph(self.config)
-        return {"message": "concept organization 완료", **asdict(result)}
+        self.refresh_navigation_pages()
+        return {"message": "concept organization 완료", **asdict(result), "navigation_refreshed": True}
+
+    def refresh_navigation_pages(self) -> dict[str, Any]:
+        from .navigation import refresh_navigation_pages
+
+        refresh_navigation_pages(self.config)
+        return {"message": "navigation pages 갱신 완료", "navigation_refreshed": True}
 
     def draft_source_summary_with_agent(self, source_text: str) -> dict[str, Any]:
         return hook_draft_source_summary_with_agent(source_text).as_dict()

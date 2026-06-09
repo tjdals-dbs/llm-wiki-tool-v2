@@ -120,6 +120,34 @@ class McpToolAdapterTests(unittest.TestCase):
             self.assertEqual(organized["fallback_count"], 0)
             self.assertTrue(lint["ok"])
 
+    def test_summarize_and_organize_refresh_navigation_pages(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            domain = load_domain_config(write_domain(root), root=root)
+            raw_file = root / "raw" / "capm.md"
+            raw_file.parent.mkdir()
+            raw_file.write_text("# CAPM\nCAPM은 기대수익률과 위험을 연결한다.", encoding="utf-8")
+            adapter = WikiToolAdapter(domain)
+
+            adapter.scan_raw_sources()
+            summary = adapter.summarize_new_sources()
+
+            index = root / "wiki" / "index.md"
+            overview = root / "wiki" / "overview.md"
+            log = root / "wiki" / "log.md"
+            self.assertTrue(summary["navigation_refreshed"])
+            self.assertTrue(index.exists())
+            self.assertTrue(overview.exists())
+            self.assertTrue(log.exists())
+            self.assertIn("sources/capm.md", index.read_text(encoding="utf-8"))
+
+            organized = adapter.organize_pending_sources()
+            refreshed_index = index.read_text(encoding="utf-8")
+
+            self.assertTrue(organized["navigation_refreshed"])
+            self.assertIn("concepts/capm.md", refreshed_index)
+            self.assertIn("concept pages: 1", overview.read_text(encoding="utf-8"))
+
     def test_agent_hook_methods_default_to_rule_based_fallback(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
