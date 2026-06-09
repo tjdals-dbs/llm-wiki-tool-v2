@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-from .agent_provider import PROVIDER_CODEX, PROVIDER_RULE_BASED, load_agent_provider_config
+from .agent_provider import PROVIDER_CLAUDE, PROVIDER_CODEX, PROVIDER_RULE_BASED, load_agent_provider_config
 from .config import DomainConfig
 from .mcp_registry import create_tool_registry
 
@@ -48,6 +48,8 @@ class McpCodexAgentRoute:
         provider = load_agent_provider_config("answer").provider
         if provider == PROVIDER_CODEX:
             route = "mcp/codex"
+        elif provider == PROVIDER_CLAUDE:
+            route = "mcp/claude"
         elif provider == PROVIDER_RULE_BASED:
             route = "mcp/rule_based"
         else:

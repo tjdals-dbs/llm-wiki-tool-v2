@@ -60,16 +60,18 @@ class AgentHookTests(unittest.TestCase):
         def fail_factory(_config):
             raise AssertionError("unsupported provider must not create a bridge")
 
-        result = draft_source_summary_with_agent(
-            "raw text",
-            env={"LLM_WIKI_AGENT_PROVIDER": "claude"},
-            bridge_factory=fail_factory,
-        )
+        env = {"LLM_WIKI_AGENT_PROVIDER": "claude"}
+        results = [
+            draft_source_summary_with_agent("raw text", env=env, bridge_factory=fail_factory),
+            draft_concept_update_with_agent("# Source", env=env, bridge_factory=fail_factory),
+            review_wiki_changes_with_agent("changes", env=env, bridge_factory=fail_factory),
+        ]
 
-        self.assertEqual(result.provider, "rule_based")
-        self.assertTrue(result.fallback)
-        self.assertEqual(result.status, "unsupported_provider_fallback")
-        self.assertIn("claude", result.error)
+        for result in results:
+            self.assertEqual(result.provider, "rule_based")
+            self.assertTrue(result.fallback)
+            self.assertEqual(result.status, "unsupported_provider_fallback")
+            self.assertIn("claude", result.error)
 
     def test_ingest_and_concept_hooks_call_codex_when_provider_enabled(self):
         created = []
