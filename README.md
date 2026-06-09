@@ -122,8 +122,11 @@ LLM_WIKI_CODEX_COMMAND=codex.cmd
 - `LLM_WIKI_CONCEPT_MODEL`: concept update draft에 사용할 model입니다.
 - `LLM_WIKI_REVIEW_MODEL`: maintenance review에 사용할 model입니다.
 - `LLM_WIKI_CODEX_COMMAND`: 실행할 Codex CLI command입니다.
+- `LLM_WIKI_GEMINI_COMMAND`: Gemini CLI 감지와 향후 provider 연결에 사용할 command입니다. 현재 Gemini는 안전한 detection/wrapper skeleton만 준비되어 있으며, answer/source/concept/review role 연결은 이후 단계에서 진행 예정입니다.
 
 환경 변수가 이미 설정되어 있으면 `.env` 값은 덮어쓰지 않습니다.
+
+Gemini CLI 사용 가능 여부와 비용/쿼터는 Google 계정, Gemini CLI 인증 방식, Google 정책에 따라 달라질 수 있습니다.
 
 ## Public/private raw data 정책
 

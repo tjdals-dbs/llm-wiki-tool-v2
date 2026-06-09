@@ -187,6 +187,16 @@ def detect_agent_providers(
     return detections
 
 
+def detect_gemini_cli(
+    role: str = "answer",
+    env: Mapping[str, str] | None = None,
+    runner: CliRunner | None = None,
+) -> AgentProviderDetection:
+    source = os.environ if env is None else env
+    probe = runner or _run_cli_probe
+    return _detect_cli_provider(PROVIDER_GEMINI, role, source, probe)
+
+
 def select_agent_provider(
     role: str = "answer",
     env: Mapping[str, str] | None = None,

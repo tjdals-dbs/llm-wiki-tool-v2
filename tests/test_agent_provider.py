@@ -5,6 +5,7 @@ from wiki_tool.agent_provider import (
     PROVIDER_CODEX,
     PROVIDER_GEMINI,
     PROVIDER_RULE_BASED,
+    detect_gemini_cli,
     detect_agent_providers,
     load_agent_provider_config,
     resolve_agent_model,
@@ -134,6 +135,16 @@ class AgentProviderConfigTests(unittest.TestCase):
 
         self.assertEqual(selected.provider, PROVIDER_CODEX)
         self.assertEqual(selected.command, "codex-local")
+
+    def test_gemini_command_environment_override_is_used_for_detection(self):
+        env = {"LLM_WIKI_GEMINI_COMMAND": "gemini-local"}
+        runner = FakeCliRunner({"gemini-local"})
+
+        detection = detect_gemini_cli(env=env, runner=runner)
+
+        self.assertEqual(detection.provider, PROVIDER_GEMINI)
+        self.assertEqual(detection.command, "gemini-local")
+        self.assertTrue(detection.usable)
 
     def test_detection_preserves_failure_reasons(self):
         detections = detect_agent_providers(env={}, runner=FakeCliRunner())
