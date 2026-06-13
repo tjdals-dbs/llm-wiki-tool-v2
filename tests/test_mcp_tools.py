@@ -196,6 +196,28 @@ class McpToolAdapterTests(unittest.TestCase):
             self.assertEqual(result["skipped_count"], 0)
             self.assertEqual(result["candidates"][0]["answer_path"], saved["path"])
 
+    def test_adapter_drafts_answer_concept_updates_without_modifying_concept(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            adapter = build_sample_wiki(root)
+            concept_path = root / "wiki" / "concepts" / "capm.md"
+            before = concept_path.read_text(encoding="utf-8")
+            adapter.apply_wiki_update(
+                question="CAPM은 무엇인가?",
+                answer="CAPM is a model.",
+                used_pages=[{"path": "wiki/concepts/capm.md"}],
+                related_pages=[],
+                evidence=[{"path": "wiki/concepts/capm.md", "text": "Evidence"}],
+                status="ok",
+                suggested_title="CAPM은 무엇인가",
+            )
+
+            result = adapter.draft_answer_concept_updates()
+
+            self.assertEqual(result["draft_count"], 1)
+            self.assertEqual(result["drafts"][0]["draft_action"], "update_existing_concept")
+            self.assertEqual(concept_path.read_text(encoding="utf-8"), before)
+
     def test_pipeline_tool_methods_return_korean_status_counts(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

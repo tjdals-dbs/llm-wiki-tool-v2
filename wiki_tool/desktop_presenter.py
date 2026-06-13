@@ -225,6 +225,7 @@ class DesktopGuiPresenter:
         summarize = self.adapter.summarize_new_sources()
         organize = self.adapter.organize_pending_sources()
         answers = self.adapter.analyze_answer_candidates()
+        answer_concept_drafts = self.adapter.draft_answer_concept_updates()
         graph = self.adapter.get_wiki_graph()
         lint = self.adapter.run_wiki_lint()
         raw_after = _raw_snapshot(self.adapter)
@@ -235,6 +236,7 @@ class DesktopGuiPresenter:
             lint,
             graph,
             answers=answers,
+            answer_concept_drafts=answer_concept_drafts,
             raw_before=raw_before,
             raw_after=raw_after,
         )
@@ -361,6 +363,7 @@ def format_maintenance_report(
     graph: dict[str, Any],
     *,
     answers: dict[str, Any] | None = None,
+    answer_concept_drafts: dict[str, Any] | None = None,
     raw_before: dict[str, str] | None = None,
     raw_after: dict[str, str] | None = None,
 ) -> str:
@@ -388,6 +391,8 @@ def format_maintenance_report(
     navigation_refreshed = bool(summarize.get("navigation_refreshed") or organize.get("navigation_refreshed"))
     answer_candidate_count = int((answers or {}).get("candidate_count", 0) or 0)
     answer_skipped_count = int((answers or {}).get("skipped_count", 0) or 0)
+    answer_draft_count = int((answer_concept_drafts or {}).get("draft_count", 0) or 0)
+    answer_draft_skipped_count = int((answer_concept_drafts or {}).get("skipped_count", 0) or 0)
     navigation_status = "갱신" if navigation_refreshed else "실행 안 함"
 
     lines = [
@@ -414,6 +419,7 @@ def format_maintenance_report(
         ),
         f"lint: {lint_status}, issue {len(lint_issues)}개",
         f"answer candidates: {answer_candidate_count}개, skipped {answer_skipped_count}개",
+        f"answer concept drafts: {answer_draft_count}개, skipped {answer_draft_skipped_count}개",
         f"navigation: {navigation_status}",
         f"안전성: {raw_integrity}, lint {lint_status}, {fallback_status}",
         (

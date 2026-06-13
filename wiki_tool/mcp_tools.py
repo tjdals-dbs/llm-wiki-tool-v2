@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .answer_maintenance import analyze_answer_candidates
+from .answer_maintenance import analyze_answer_candidates, draft_answer_concept_updates
 from .answer_save_decision import decide_answer_save
 from .agent_hooks import (
     draft_concept_update_with_agent as hook_draft_concept_update_with_agent,
@@ -196,6 +196,9 @@ class WikiToolAdapter:
 
     def analyze_answer_candidates(self) -> dict[str, Any]:
         return analyze_answer_candidates(self.config)
+
+    def draft_answer_concept_updates(self) -> dict[str, Any]:
+        return draft_answer_concept_updates(self.config)
 
     def draft_source_summary_with_agent(self, source_text: str) -> dict[str, Any]:
         return hook_draft_source_summary_with_agent(source_text).as_dict()

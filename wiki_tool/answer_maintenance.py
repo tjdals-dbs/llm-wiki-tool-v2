@@ -29,6 +29,29 @@ def analyze_answer_candidates(config: DomainConfig) -> dict[str, Any]:
     }
 
 
+def draft_answer_concept_updates(config: DomainConfig) -> dict[str, Any]:
+    analysis = analyze_answer_candidates(config)
+    answer_by_path = {page["path"]: page for page in analysis.get("answers", [])}
+    drafts: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+
+    for candidate in [*analysis.get("candidates", []), *analysis.get("skipped", [])]:
+        page = answer_by_path.get(str(candidate.get("answer_path", "")), {})
+        draft = _draft_from_candidate(candidate, page)
+        if draft["draft_action"] == "skip":
+            skipped.append(draft)
+        else:
+            drafts.append(draft)
+
+    return {
+        "draft_count": len(drafts),
+        "skipped_count": len(skipped),
+        "drafts": drafts,
+        "skipped": skipped,
+        "candidate_count": analysis.get("candidate_count", 0),
+    }
+
+
 def _scan_answer_pages(config: DomainConfig) -> list[dict[str, Any]]:
     answers_dir = config.wiki_dir / "answers"
     if not answers_dir.exists():
@@ -96,6 +119,7 @@ def _candidate_from_answer_page(page: dict[str, Any], concept_pages: list[dict[s
         "answer_path": page.get("path", ""),
         "candidate_title": candidate_title,
         "used_pages": used_pages,
+        "evidence": list(page.get("evidence") or []),
         "evidence_count": evidence_count,
         "existing_concept_matches": _existing_concept_matches(page, concept_pages),
         "question": page.get("question", ""),
@@ -112,6 +136,67 @@ def _candidate_from_answer_page(page: dict[str, Any], concept_pages: list[dict[s
         "action": "candidate",
         "candidate_reason": "근거 문서가 있어 concept 반영 후보입니다.",
     }
+
+
+def _draft_from_candidate(candidate: dict[str, Any], page: dict[str, Any]) -> dict[str, Any]:
+    answer_path = str(candidate.get("answer_path") or "")
+    evidence = list(page.get("evidence") or candidate.get("evidence") or [])
+    used_pages = list(candidate.get("used_pages") or [])
+    candidate_title = str(candidate.get("candidate_title") or "").strip()
+    existing_matches = list(candidate.get("existing_concept_matches") or [])
+    base = {
+        "answer_path": answer_path,
+        "target_concept_path": existing_matches[0] if existing_matches else "",
+        "candidate_title": candidate_title,
+        "draft_summary": _draft_summary(str(page.get("answer") or candidate.get("answer_preview") or "")),
+        "evidence": evidence,
+        "used_pages": used_pages,
+        "reason": "",
+    }
+    skip_reason = _draft_skip_reason(candidate, page, evidence, candidate_title)
+    if skip_reason:
+        return {**base, "draft_action": "skip", "reason": skip_reason}
+    if existing_matches:
+        return {
+            **base,
+            "draft_action": "update_existing_concept",
+            "reason": "existing concept match가 있어 기존 concept 반영 초안으로 분류했습니다.",
+        }
+    return {
+        **base,
+        "draft_action": "new_concept_candidate",
+        "reason": "기존 concept match가 없어 새 concept 후보 초안으로 분류했습니다.",
+    }
+
+
+def _draft_skip_reason(
+    candidate: dict[str, Any],
+    page: dict[str, Any],
+    evidence: list[dict[str, str]],
+    candidate_title: str,
+) -> str:
+    if candidate.get("action") == "skip":
+        return str(candidate.get("candidate_reason") or "answer candidate가 skip 상태입니다.")
+    if str(candidate.get("status") or page.get("status") or "") != "ok":
+        return "status가 ok가 아니라 concept draft 대상에서 제외합니다."
+    if not str(page.get("answer") or candidate.get("answer_preview") or "").strip():
+        return "answer 본문이 비어 있어 concept draft 대상에서 제외합니다."
+    if not evidence:
+        return "source evidence가 없어 concept draft 대상에서 제외합니다."
+    if _is_generic_candidate_title(candidate_title):
+        return "candidate title이 비어 있거나 너무 일반적이라 concept draft 대상에서 제외합니다."
+    return ""
+
+
+def _draft_summary(answer: str) -> str:
+    return _preview(answer, limit=240)
+
+
+def _is_generic_candidate_title(value: str) -> bool:
+    normalized = _normalize_title(value)
+    if len(normalized) < 2:
+        return True
+    return normalized in {"answer", "answers", "question", "questions", "page", "concept", "답변", "질문", "문서", "개념"}
 
 
 def _skip_reason(page: dict[str, Any]) -> str:
