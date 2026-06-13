@@ -291,10 +291,13 @@ class DesktopGuiPresenter:
                 related_pages=result.related_pages,
                 evidence=result.evidence,
                 status=result.status,
+                suggested_title=str(decision.get("suggested_title") or ""),
             )
         except Exception as exc:
             return f"답변 저장 실패: {exc}"
         path = str(saved.get("path") or "wiki/answers")
+        if saved.get("updated") and not saved.get("created"):
+            return f"기존 답변 페이지 업데이트됨: {path}"
         return f"위키에 답변 저장됨: {path}"
 
 

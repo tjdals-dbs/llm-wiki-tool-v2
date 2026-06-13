@@ -58,6 +58,7 @@ class FakeAdapter:
         self.saved_updates = []
         self.fail_save = False
         self.answer_payload = None
+        self.save_result = None
 
     def scan_raw_sources(self):
         self.calls.append("scan")
@@ -108,6 +109,7 @@ class FakeAdapter:
                 "save_action": "save",
                 "save_eligible": True,
                 "save_reason": "근거 문서가 있어 위키 저장 대상으로 판단했습니다.",
+                "suggested_title": "CAPM은 무엇인가",
             },
         }
 
@@ -115,6 +117,8 @@ class FakeAdapter:
         if self.fail_save:
             raise RuntimeError("save unavailable")
         self.saved_updates.append(kwargs)
+        if self.save_result is not None:
+            return self.save_result
         return {"path": "wiki/answers/capm.md", "status": kwargs.get("status", "ok")}
 
     def list_wiki_pages(self, page_type=None):
@@ -614,6 +618,7 @@ class DesktopGuiTests(unittest.TestCase):
         self.assertEqual(saved["question"], "CAPM은 무엇인가?")
         self.assertIn("wiki", saved["answer"])
         self.assertEqual(saved["status"], "ok")
+        self.assertEqual(saved["suggested_title"], "CAPM은 무엇인가")
         self.assertEqual(saved["used_pages"], [{"path": "wiki/concepts/capm.md", "title": "CAPM"}])
         self.assertEqual(saved["evidence"], [{"path": "wiki/sources/capm.md", "quote": "CAPM"}])
 
@@ -652,6 +657,21 @@ class DesktopGuiTests(unittest.TestCase):
         self.assertIn("wiki", result.message)
         self.assertIn("답변 저장 실패", result.status_message)
         self.assertIn("save unavailable", result.status_message)
+
+    def test_agent_workflow_reports_existing_answer_page_update(self):
+        adapter = FakeAdapter()
+        adapter.save_result = {
+            "path": "wiki/answers/capm.md",
+            "status": "ok",
+            "created": False,
+            "updated": True,
+        }
+        presenter = DesktopGuiPresenter(adapter, agent_route=DirectAdapterAgentFallback(adapter))
+
+        result = presenter.ask_agent_workflow("CAPM은 무엇인가?")
+
+        self.assertIn("기존 답변 페이지 업데이트됨", result.status_message)
+        self.assertIn("wiki/answers/capm.md", result.status_message)
 
     def test_mcp_route_falls_back_to_direct_adapter_when_registry_fails(self):
         adapter = FakeAdapter()

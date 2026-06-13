@@ -1,4 +1,5 @@
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -40,6 +41,15 @@ def build_sample_wiki(root: Path) -> WikiToolAdapter:
     summarize_new_sources(domain)
     organize_pending_sources(domain)
     return WikiToolAdapter(domain)
+
+
+def _answer_metadata(path: Path) -> dict[str, str]:
+    metadata: dict[str, str] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line.startswith("- ") and ":" in line:
+            key, value = line[2:].split(":", 1)
+            metadata[key.strip()] = value.strip()
+    return metadata
 
 
 class McpToolAdapterTests(unittest.TestCase):
@@ -94,6 +104,47 @@ class McpToolAdapterTests(unittest.TestCase):
             self.assertIn("## Related Pages", content)
             self.assertIn("wiki/concepts/capm.md", content)
             self.assertIn("체계적 위험", content)
+
+    def test_apply_wiki_update_updates_existing_answer_without_duplicate_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            adapter = build_sample_wiki(root)
+
+            first = adapter.apply_wiki_update(
+                question="CAPM은 무엇인가?",
+                answer="첫 답변",
+                used_pages=[{"path": "wiki/concepts/capm.md"}],
+                related_pages=[],
+                evidence=[{"path": "wiki/concepts/capm.md", "text": "첫 근거"}],
+                status="ok",
+                suggested_title="CAPM은 무엇인가",
+            )
+            answer_path = root / first["path"]
+            first_metadata = _answer_metadata(answer_path)
+            time.sleep(0.002)
+
+            second = adapter.apply_wiki_update(
+                question="CAPM은 무엇인가?",
+                answer="갱신된 답변",
+                used_pages=[{"path": "wiki/concepts/capm.md"}],
+                related_pages=[],
+                evidence=[{"path": "wiki/concepts/capm.md", "text": "갱신된 근거"}],
+                status="ok",
+                suggested_title="CAPM은 무엇인가",
+            )
+
+            answer_files = list((root / "wiki" / "answers").glob("*.md"))
+            second_metadata = _answer_metadata(answer_path)
+            self.assertEqual(first["path"], second["path"])
+            self.assertEqual(len(answer_files), 1)
+            self.assertTrue(first["created"])
+            self.assertFalse(first["updated"])
+            self.assertFalse(second["created"])
+            self.assertTrue(second["updated"])
+            self.assertEqual(first_metadata["created"], second_metadata["created"])
+            self.assertNotEqual(first_metadata["updated"], second_metadata["updated"])
+            self.assertEqual(second_metadata["question"], "CAPM은 무엇인가?")
+            self.assertIn("갱신된 답변", answer_path.read_text(encoding="utf-8"))
 
     def test_pipeline_tool_methods_return_korean_status_counts(self):
         with tempfile.TemporaryDirectory() as tmp:

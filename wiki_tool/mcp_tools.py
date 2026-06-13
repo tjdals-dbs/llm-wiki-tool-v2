@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import asdict
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -210,22 +211,37 @@ class WikiToolAdapter:
         related_pages: list[dict[str, Any]] | None = None,
         evidence: list[dict[str, Any]] | None = None,
         status: str = "ok",
-    ) -> dict[str, str]:
+        suggested_title: str | None = None,
+    ) -> dict[str, Any]:
         answer_dir = self.config.wiki_dir / "answers"
         answer_dir.mkdir(parents=True, exist_ok=True)
-        path = answer_dir / f"{_slug(question)}.md"
+        title = (suggested_title or question).strip() or question
+        path = answer_dir / f"{_slug(title)}.md"
+        existed = path.exists()
+        existing_created = _answer_metadata_value(path, "created") if existed else ""
+        now = _utc_timestamp()
+        created_at = existing_created or now
+        updated_at = now
         path.write_text(
             _render_answer_page(
+                title=title,
                 question=question,
                 answer=answer,
                 used_pages=used_pages or [],
                 related_pages=related_pages or [],
                 evidence=evidence or [],
                 status=status,
+                created=created_at,
+                updated=updated_at,
             ),
             encoding="utf-8",
         )
-        return {"path": path.relative_to(self.config.root).as_posix(), "status": status}
+        return {
+            "path": path.relative_to(self.config.root).as_posix(),
+            "status": status,
+            "created": not existed,
+            "updated": existed,
+        }
 
     def run_wiki_lint(self) -> dict[str, Any]:
         result = core_run_wiki_lint(self.config)
@@ -478,16 +494,19 @@ def _first_nonempty_line(content: str) -> str:
 
 def _render_answer_page(
     *,
+    title: str,
     question: str,
     answer: str,
     used_pages: list[dict[str, Any]],
     related_pages: list[dict[str, Any]],
     evidence: list[dict[str, Any]],
     status: str,
+    created: str,
+    updated: str,
 ) -> str:
     return "\n".join(
         [
-            f"# {question}",
+            f"# {title}",
             "",
             "## Answer",
             "",
@@ -507,7 +526,10 @@ def _render_answer_page(
             "",
             "## Maintenance Notes",
             "",
+            f"- created: {created}",
+            f"- updated: {updated}",
             f"- status: {status}",
+            f"- question: {question}",
             "",
         ]
     )
@@ -527,6 +549,20 @@ def _evidence_bullets(evidence: list[dict[str, Any]]) -> str:
         for item in evidence
         if item.get("path") and item.get("text")
     )
+
+
+def _answer_metadata_value(path: Path, key: str) -> str:
+    if not path.exists():
+        return ""
+    prefix = f"- {key}:"
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line.startswith(prefix):
+            return line.split(":", 1)[1].strip()
+    return ""
+
+
+def _utc_timestamp() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z")
 
 
 def _slug(value: str) -> str:
