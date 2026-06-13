@@ -5,6 +5,7 @@ from pathlib import Path
 
 from wiki_tool.config import load_domain_config
 from wiki_tool.mcp_tools import WikiToolAdapter
+from wiki_tool.mcp_registry import create_tool_registry
 from wiki_tool.scanner import scan_raw_sources
 from wiki_tool.summarizer import summarize_new_sources
 from wiki_tool.organizer import organize_pending_sources
@@ -217,6 +218,46 @@ class McpToolAdapterTests(unittest.TestCase):
             self.assertEqual(result["draft_count"], 1)
             self.assertEqual(result["drafts"][0]["draft_action"], "update_existing_concept")
             self.assertEqual(concept_path.read_text(encoding="utf-8"), before)
+
+    def test_adapter_applies_answer_concept_updates_and_refreshes_navigation_graph(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            adapter = build_sample_wiki(root)
+            concept_path = root / "wiki" / "concepts" / "capm.md"
+            adapter.apply_wiki_update(
+                question="What is CAPM?",
+                answer="CAPM links expected return to systematic risk.",
+                used_pages=[{"path": "wiki/concepts/capm.md"}],
+                related_pages=[],
+                evidence=[{"path": "wiki/sources/capm.md", "text": "CAPM source evidence"}],
+                status="ok",
+                suggested_title="CAPM",
+            )
+
+            result = adapter.apply_answer_concept_updates()
+            graph = adapter.get_wiki_graph()
+            graph_edges = {(edge["from"], edge["to"]) for edge in graph["edges"]}
+            index = (root / "wiki" / "index.md").read_text(encoding="utf-8")
+            overview = (root / "wiki" / "overview.md").read_text(encoding="utf-8")
+            log = (root / "wiki" / "log.md").read_text(encoding="utf-8")
+
+            self.assertEqual(result["applied_count"], 1)
+            self.assertTrue(result["navigation_refreshed"])
+            self.assertTrue(result["graph_refreshed"])
+            self.assertIn("## Answer-Derived Notes", concept_path.read_text(encoding="utf-8"))
+            self.assertIn(("wiki/concepts/capm.md", "wiki/answers/capm.md"), graph_edges)
+            self.assertIn("concepts/capm.md", index)
+            self.assertIn("concept pages: 1", overview)
+            self.assertIn("answer concept update applied", log)
+
+    def test_registry_exposes_answer_concept_update_apply_tool(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            domain = load_domain_config(write_domain(root), root=root)
+
+            registry = create_tool_registry(domain)
+
+            self.assertIn("apply_answer_concept_updates", registry)
 
     def test_pipeline_tool_methods_return_korean_status_counts(self):
         with tempfile.TemporaryDirectory() as tmp:

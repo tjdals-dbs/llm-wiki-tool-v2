@@ -226,6 +226,7 @@ class DesktopGuiPresenter:
         organize = self.adapter.organize_pending_sources()
         answers = self.adapter.analyze_answer_candidates()
         answer_concept_drafts = self.adapter.draft_answer_concept_updates()
+        answer_concept_updates = self.adapter.apply_answer_concept_updates()
         graph = self.adapter.get_wiki_graph()
         lint = self.adapter.run_wiki_lint()
         raw_after = _raw_snapshot(self.adapter)
@@ -237,6 +238,7 @@ class DesktopGuiPresenter:
             graph,
             answers=answers,
             answer_concept_drafts=answer_concept_drafts,
+            answer_concept_updates=answer_concept_updates,
             raw_before=raw_before,
             raw_after=raw_after,
         )
@@ -364,6 +366,7 @@ def format_maintenance_report(
     *,
     answers: dict[str, Any] | None = None,
     answer_concept_drafts: dict[str, Any] | None = None,
+    answer_concept_updates: dict[str, Any] | None = None,
     raw_before: dict[str, str] | None = None,
     raw_after: dict[str, str] | None = None,
 ) -> str:
@@ -388,11 +391,17 @@ def format_maintenance_report(
     unchanged_count = max(scanned_count - new_count - changed_count, 0)
     lint_status = "통과" if lint_ok else "실패"
     fallback_status = "fallback 발생" if fallback_count else "fallback 없음"
-    navigation_refreshed = bool(summarize.get("navigation_refreshed") or organize.get("navigation_refreshed"))
+    navigation_refreshed = bool(
+        summarize.get("navigation_refreshed")
+        or organize.get("navigation_refreshed")
+        or (answer_concept_updates or {}).get("navigation_refreshed")
+    )
     answer_candidate_count = int((answers or {}).get("candidate_count", 0) or 0)
     answer_skipped_count = int((answers or {}).get("skipped_count", 0) or 0)
     answer_draft_count = int((answer_concept_drafts or {}).get("draft_count", 0) or 0)
     answer_draft_skipped_count = int((answer_concept_drafts or {}).get("skipped_count", 0) or 0)
+    answer_update_count = int((answer_concept_updates or {}).get("applied_count", 0) or 0)
+    answer_update_skipped_count = int((answer_concept_updates or {}).get("skipped_count", 0) or 0)
     navigation_status = "갱신" if navigation_refreshed else "실행 안 함"
 
     lines = [
@@ -420,6 +429,7 @@ def format_maintenance_report(
         f"lint: {lint_status}, issue {len(lint_issues)}개",
         f"answer candidates: {answer_candidate_count}개, skipped {answer_skipped_count}개",
         f"answer concept drafts: {answer_draft_count}개, skipped {answer_draft_skipped_count}개",
+        f"answer concept updates: applied {answer_update_count}개, skipped {answer_update_skipped_count}개",
         f"navigation: {navigation_status}",
         f"안전성: {raw_integrity}, lint {lint_status}, {fallback_status}",
         (

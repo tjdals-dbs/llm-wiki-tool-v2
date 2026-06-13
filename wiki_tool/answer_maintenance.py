@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import posixpath
 from pathlib import Path
 from typing import Any
 
@@ -50,6 +51,200 @@ def draft_answer_concept_updates(config: DomainConfig) -> dict[str, Any]:
         "skipped": skipped,
         "candidate_count": analysis.get("candidate_count", 0),
     }
+
+
+def apply_answer_concept_updates(config: DomainConfig) -> dict[str, Any]:
+    result = draft_answer_concept_updates(config)
+    applied: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+
+    for draft in result.get("drafts", []):
+        application = _apply_answer_concept_draft(config, draft)
+        if application["status"] == "applied":
+            applied.append(application)
+        else:
+            skipped.append(application)
+
+    for draft in result.get("skipped", []):
+        skipped.append(
+            {
+                "status": "skipped",
+                "answer_path": draft.get("answer_path", ""),
+                "target_concept_path": draft.get("target_concept_path", ""),
+                "reason": draft.get("reason", "draft skipped"),
+            }
+        )
+
+    graph_refreshed = False
+    navigation_refreshed = False
+    if applied:
+        from .graph import build_wiki_graph
+        from .navigation import refresh_navigation_pages
+
+        build_wiki_graph(config)
+        refresh_navigation_pages(config)
+        graph_refreshed = True
+        navigation_refreshed = True
+
+    if applied or skipped:
+        _append_answer_concept_update_log(config, applied, skipped)
+
+    return {
+        "applied_count": len(applied),
+        "skipped_count": len(skipped),
+        "applied": applied,
+        "skipped": skipped,
+        "navigation_refreshed": navigation_refreshed,
+        "graph_refreshed": graph_refreshed,
+    }
+
+
+def _apply_answer_concept_draft(config: DomainConfig, draft: dict[str, Any]) -> dict[str, Any]:
+    answer_path = str(draft.get("answer_path") or "")
+    target_concept_path = str(draft.get("target_concept_path") or "")
+    base = {
+        "answer_path": answer_path,
+        "target_concept_path": target_concept_path,
+    }
+    if draft.get("draft_action") != "update_existing_concept":
+        return {
+            **base,
+            "status": "skipped",
+            "reason": "new concept candidates require review before concept page creation.",
+        }
+    if not _draft_has_source_evidence(draft):
+        return {**base, "status": "skipped", "reason": "source evidence is required before concept update."}
+    concept_path = _safe_wiki_file(config, target_concept_path, required_part="/concepts/")
+    if concept_path is None or not concept_path.exists():
+        return {**base, "status": "skipped", "reason": "target concept page was not found."}
+    summary = str(draft.get("draft_summary") or "").strip()
+    if not summary:
+        return {**base, "status": "skipped", "reason": "draft summary is empty."}
+
+    marker = _answer_update_marker(answer_path)
+    content = concept_path.read_text(encoding="utf-8")
+    if marker in content:
+        return {**base, "status": "skipped", "reason": "already applied to target concept."}
+
+    note = _render_answer_update_note(config, target_concept_path, draft, marker)
+    updated = _append_agent_update_section(content, note)
+    concept_path.write_text(updated, encoding="utf-8")
+    return {**base, "status": "applied", "reason": "answer-derived note appended to concept page."}
+
+
+def _draft_has_source_evidence(draft: dict[str, Any]) -> bool:
+    paths: list[str] = []
+    paths.extend(str(item.get("path") or "") for item in draft.get("evidence", []) or [])
+    paths.extend(str(path or "") for path in draft.get("used_pages", []) or [])
+    return any(_is_source_page_path(path) for path in paths)
+
+
+def _safe_wiki_file(config: DomainConfig, relative_path: str, *, required_part: str = "") -> Path | None:
+    normalized = relative_path.replace("\\", "/").lstrip("/")
+    if not normalized.startswith("wiki/") or ".." in Path(normalized).parts:
+        return None
+    if required_part and required_part not in f"/{normalized}":
+        return None
+    path = (config.root / normalized).resolve()
+    wiki_root = config.wiki_dir.resolve()
+    if path != wiki_root and wiki_root not in path.parents:
+        return None
+    return path
+
+
+def _answer_update_marker(answer_path: str) -> str:
+    return f"<!-- answer-derived: {answer_path} -->"
+
+
+def _render_answer_update_note(
+    config: DomainConfig,
+    target_concept_path: str,
+    draft: dict[str, Any],
+    marker: str,
+) -> str:
+    answer_path = str(draft.get("answer_path") or "")
+    answer_link = _wiki_relative_link(target_concept_path, answer_path)
+    source_links = _source_evidence_links(config, target_concept_path, draft)
+    source_text = ", ".join(source_links) if source_links else "source evidence recorded in answer page"
+    summary = _single_line(str(draft.get("draft_summary") or ""))
+    return "\n".join(
+        [
+            marker,
+            f"- From [{Path(answer_path).stem}]({answer_link}): {summary}",
+            f"  - source evidence: {source_text}",
+        ]
+    )
+
+
+def _source_evidence_links(config: DomainConfig, target_concept_path: str, draft: dict[str, Any]) -> list[str]:
+    paths: list[str] = []
+    for item in draft.get("evidence", []) or []:
+        path = str(item.get("path") or "")
+        if _is_source_page_path(path):
+            paths.append(path)
+    for path in draft.get("used_pages", []) or []:
+        if _is_source_page_path(str(path or "")):
+            paths.append(str(path))
+    links: list[str] = []
+    for path in _dedupe(paths):
+        normalized = _normalize_wiki_source_path(path)
+        if not normalized:
+            continue
+        target = _safe_wiki_file(config, normalized)
+        if target is not None and target.exists():
+            links.append(f"[{Path(normalized).stem}]({_wiki_relative_link(target_concept_path, normalized)})")
+        else:
+            links.append(normalized)
+    return links
+
+
+def _normalize_wiki_source_path(path: str) -> str:
+    normalized = path.replace("\\", "/").strip()
+    normalized = normalized.split("#", 1)[0].split("?", 1)[0].lstrip("./")
+    if normalized.startswith("wiki/sources/"):
+        return normalized
+    if normalized.startswith("sources/"):
+        return f"wiki/{normalized}"
+    return ""
+
+
+def _wiki_relative_link(from_path: str, target_path: str) -> str:
+    if not target_path:
+        return ""
+    source_parent = posixpath.dirname(from_path.replace("\\", "/")) or "."
+    normalized_target = target_path.replace("\\", "/")
+    return posixpath.relpath(normalized_target, start=source_parent)
+
+
+def _append_agent_update_section(content: str, note: str) -> str:
+    section = "## Answer-Derived Notes"
+    stripped = content.rstrip()
+    if section not in content:
+        return f"{stripped}\n\n{section}\n\n{note}\n"
+    before, after = content.split(section, 1)
+    return f"{before}{section}{after.rstrip()}\n\n{note}\n"
+
+
+def _append_answer_concept_update_log(
+    config: DomainConfig,
+    applied: list[dict[str, Any]],
+    skipped: list[dict[str, Any]],
+) -> None:
+    config.wiki_dir.mkdir(parents=True, exist_ok=True)
+    path = config.wiki_dir / "log.md"
+    existing = path.read_text(encoding="utf-8") if path.exists() else "# Wiki Log\n\n"
+    lines: list[str] = []
+    for item in applied:
+        lines.append(
+            f"- answer concept update applied: {item.get('answer_path', '')} -> {item.get('target_concept_path', '')}"
+        )
+    for item in skipped:
+        lines.append(
+            f"- answer concept update skipped: {item.get('answer_path', '')}, reason={item.get('reason', '')}"
+        )
+    if not lines:
+        return
+    path.write_text(existing.rstrip() + "\n\n" + "\n".join(lines) + "\n", encoding="utf-8")
 
 
 def _scan_answer_pages(config: DomainConfig) -> list[dict[str, Any]]:
@@ -359,6 +554,10 @@ def _preview(value: str, limit: int = 180) -> str:
     if len(compact) <= limit:
         return compact
     return compact[: limit - 1].rstrip() + "…"
+
+
+def _single_line(value: str) -> str:
+    return re.sub(r"\s+", " ", value).strip()
 
 
 def _normalize_title(value: str) -> str:

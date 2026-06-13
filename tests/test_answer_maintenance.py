@@ -2,7 +2,11 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from wiki_tool.answer_maintenance import analyze_answer_candidates, draft_answer_concept_updates
+from wiki_tool.answer_maintenance import (
+    analyze_answer_candidates,
+    apply_answer_concept_updates,
+    draft_answer_concept_updates,
+)
 from wiki_tool.config import load_domain_config
 from wiki_tool.mcp_tools import WikiToolAdapter
 
@@ -318,6 +322,126 @@ class AnswerMaintenanceTests(unittest.TestCase):
             draft_answer_concept_updates(domain)
 
             self.assertEqual(concept.read_text(encoding="utf-8"), before)
+
+    def test_apply_answer_concept_update_appends_source_evidence_note(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            domain = load_domain_config(write_domain(root), root=root)
+            adapter = WikiToolAdapter(domain)
+            concept = root / "wiki" / "concepts" / "jwt.md"
+            concept.parent.mkdir(parents=True)
+            concept.write_text("# JWT\n\n## Definition\n\nHuman-authored definition.\n", encoding="utf-8")
+            (root / "wiki" / "sources").mkdir(parents=True)
+            (root / "wiki" / "sources" / "jwt.md").write_text("# JWT Source\n", encoding="utf-8")
+            adapter.apply_wiki_update(
+                question="What is JWT?",
+                answer="JWT is a compact token format used to carry claims between systems.",
+                used_pages=[{"path": "wiki/concepts/jwt.md"}],
+                related_pages=[],
+                evidence=[{"path": "wiki/sources/jwt.md", "text": "JWT source evidence"}],
+                status="ok",
+                suggested_title="JWT",
+            )
+
+            result = apply_answer_concept_updates(domain)
+            content = concept.read_text(encoding="utf-8")
+
+            self.assertEqual(result["applied_count"], 1)
+            self.assertEqual(result["skipped_count"], 0)
+            self.assertIn("## Answer-Derived Notes", content)
+            self.assertIn("Human-authored definition.", content)
+            self.assertLess(content.index("## Definition"), content.index("## Answer-Derived Notes"))
+            self.assertIn("JWT is a compact token format", content)
+            self.assertIn("../answers/jwt.md", content)
+            self.assertIn("../sources/jwt.md", content)
+            self.assertTrue(result["navigation_refreshed"])
+            self.assertTrue(result["graph_refreshed"])
+            self.assertIn("answer concept update applied", (root / "wiki" / "log.md").read_text(encoding="utf-8"))
+
+    def test_apply_answer_concept_update_skips_without_source_evidence(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            domain = load_domain_config(write_domain(root), root=root)
+            adapter = WikiToolAdapter(domain)
+            concept = root / "wiki" / "concepts" / "jwt.md"
+            concept.parent.mkdir(parents=True)
+            concept.write_text("# JWT\n\n## Definition\n\nHuman-authored definition.\n", encoding="utf-8")
+            before = concept.read_text(encoding="utf-8")
+            adapter.apply_wiki_update(
+                question="What is JWT?",
+                answer="JWT is a compact token format.",
+                used_pages=[{"path": "wiki/concepts/jwt.md"}],
+                related_pages=[],
+                evidence=[{"path": "wiki/concepts/jwt.md", "text": "Concept-only evidence"}],
+                status="ok",
+                suggested_title="JWT",
+            )
+
+            result = apply_answer_concept_updates(domain)
+
+            self.assertEqual(result["applied_count"], 0)
+            self.assertGreaterEqual(result["skipped_count"], 1)
+            self.assertEqual(concept.read_text(encoding="utf-8"), before)
+            self.assertFalse(result["navigation_refreshed"])
+            self.assertFalse(result["graph_refreshed"])
+            self.assertIn("source evidence", (root / "wiki" / "log.md").read_text(encoding="utf-8"))
+
+    def test_apply_answer_concept_update_is_idempotent(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            domain = load_domain_config(write_domain(root), root=root)
+            adapter = WikiToolAdapter(domain)
+            concept = root / "wiki" / "concepts" / "jwt.md"
+            concept.parent.mkdir(parents=True)
+            concept.write_text("# JWT\n\n## Definition\n\nHuman-authored definition.\n", encoding="utf-8")
+            (root / "wiki" / "sources").mkdir(parents=True)
+            (root / "wiki" / "sources" / "jwt.md").write_text("# JWT Source\n", encoding="utf-8")
+            adapter.apply_wiki_update(
+                question="What is JWT?",
+                answer="JWT is a compact token format used to carry claims between systems.",
+                used_pages=[{"path": "wiki/concepts/jwt.md"}],
+                related_pages=[],
+                evidence=[{"path": "wiki/sources/jwt.md", "text": "JWT source evidence"}],
+                status="ok",
+                suggested_title="JWT",
+            )
+
+            first = apply_answer_concept_updates(domain)
+            second = apply_answer_concept_updates(domain)
+            content = concept.read_text(encoding="utf-8")
+
+            self.assertEqual(first["applied_count"], 1)
+            self.assertEqual(second["applied_count"], 0)
+            self.assertEqual(content.count("<!-- answer-derived: wiki/answers/jwt.md -->"), 1)
+            self.assertIn("already applied", second["skipped"][0]["reason"])
+
+    def test_apply_answer_concept_update_does_not_modify_raw_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            raw = root / "raw" / "note.md"
+            raw.parent.mkdir(parents=True)
+            raw.write_text("immutable raw fixture", encoding="utf-8")
+            before = raw.read_text(encoding="utf-8")
+            domain = load_domain_config(write_domain(root), root=root)
+            adapter = WikiToolAdapter(domain)
+            concept = root / "wiki" / "concepts" / "jwt.md"
+            concept.parent.mkdir(parents=True)
+            concept.write_text("# JWT\n\n## Definition\n\nHuman-authored definition.\n", encoding="utf-8")
+            (root / "wiki" / "sources").mkdir(parents=True)
+            (root / "wiki" / "sources" / "jwt.md").write_text("# JWT Source\n", encoding="utf-8")
+            adapter.apply_wiki_update(
+                question="What is JWT?",
+                answer="JWT is a compact token format.",
+                used_pages=[{"path": "wiki/concepts/jwt.md"}],
+                related_pages=[],
+                evidence=[{"path": "wiki/sources/jwt.md", "text": "JWT source evidence"}],
+                status="ok",
+                suggested_title="JWT",
+            )
+
+            apply_answer_concept_updates(domain)
+
+            self.assertEqual(raw.read_text(encoding="utf-8"), before)
 
 
 if __name__ == "__main__":

@@ -9,6 +9,7 @@ from unittest.mock import patch
 from wiki_tool.agent_hooks import AgentHookResult
 from wiki_tool.agent_runtime import run_maintenance_once
 from wiki_tool.config import load_domain_config
+from wiki_tool.mcp_tools import WikiToolAdapter
 
 
 def write_domain(root: Path) -> Path:
@@ -89,8 +90,37 @@ class AgentRuntimeTests(unittest.TestCase):
             self.assertEqual(result["answers"]["skipped_count"], 0)
             self.assertEqual(result["answer_concept_drafts"]["draft_count"], 0)
             self.assertEqual(result["answer_concept_drafts"]["skipped_count"], 0)
+            self.assertEqual(result["answer_concept_updates"]["applied_count"], 0)
+            self.assertEqual(result["answer_concept_updates"]["skipped_count"], 0)
             self.assertEqual(result["review"]["status"], "skipped")
             self.assertTrue((root / "wiki" / "concepts" / "capm.md").exists())
+
+    def test_run_maintenance_once_applies_answer_concept_updates(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            domain = load_domain_config(write_domain(root), root=root)
+            concept = root / "wiki" / "concepts" / "jwt.md"
+            source = root / "wiki" / "sources" / "jwt.md"
+            concept.parent.mkdir(parents=True)
+            source.parent.mkdir(parents=True)
+            concept.write_text("# JWT\n\n## Definition\n\nHuman-authored definition.\n", encoding="utf-8")
+            source.write_text("# JWT Source\n", encoding="utf-8")
+            adapter = WikiToolAdapter(domain)
+            adapter.apply_wiki_update(
+                question="What is JWT?",
+                answer="JWT is a compact token format.",
+                used_pages=[{"path": "wiki/concepts/jwt.md"}],
+                related_pages=[],
+                evidence=[{"path": "wiki/sources/jwt.md", "text": "JWT source evidence"}],
+                status="ok",
+                suggested_title="JWT",
+            )
+
+            with patch.dict(os.environ, _runtime_subprocess_env()):
+                result = run_maintenance_once(domain)
+
+            self.assertEqual(result["answer_concept_updates"]["applied_count"], 1)
+            self.assertIn("## Answer-Derived Notes", concept.read_text(encoding="utf-8"))
 
     def test_run_maintenance_once_reviews_codex_pipeline_without_failing_on_review_error(self):
         with tempfile.TemporaryDirectory() as tmp:

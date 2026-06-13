@@ -14,6 +14,7 @@ def run_maintenance_once(config: DomainConfig) -> dict[str, Any]:
     organize = adapter.organize_pending_sources()
     answers = adapter.analyze_answer_candidates()
     answer_concept_drafts = adapter.draft_answer_concept_updates()
+    answer_concept_updates = adapter.apply_answer_concept_updates()
     review = _review_pipeline_if_codex_used(config, summarize, organize)
     lint = adapter.run_wiki_lint()
     return {
@@ -22,6 +23,7 @@ def run_maintenance_once(config: DomainConfig) -> dict[str, Any]:
         "organize": organize,
         "answers": answers,
         "answer_concept_drafts": answer_concept_drafts,
+        "answer_concept_updates": answer_concept_updates,
         "review": review,
         "lint": lint,
     }
