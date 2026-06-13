@@ -69,6 +69,9 @@ class AnswerAndMcpServerTests(unittest.TestCase):
             self.assertTrue(answer["used_pages"])
             self.assertTrue(answer["related_pages"])
             self.assertTrue(answer["evidence"])
+            self.assertEqual(answer["save_decision"]["save_action"], "save")
+            self.assertTrue(answer["save_decision"]["save_eligible"])
+            self.assertFalse((Path(tmp) / "wiki" / "answers").exists())
             self.assertIn("CAPM", answer["evidence"][0]["text"])
             self.assertNotIn("## Used Pages", answer["answer"])
 
@@ -84,6 +87,8 @@ class AnswerAndMcpServerTests(unittest.TestCase):
             self.assertIn("근거가 부족합니다", answer["answer"])
             self.assertEqual(answer["used_pages"], [])
             self.assertEqual(answer["evidence"], [])
+            self.assertEqual(answer["save_decision"]["save_action"], "skip")
+            self.assertFalse(answer["save_decision"]["save_eligible"])
 
     def test_answer_question_uses_codex_provider_when_enabled(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -137,6 +142,8 @@ class AnswerAndMcpServerTests(unittest.TestCase):
             self.assertEqual(answer["codex_status"], "codex_command_not_found")
             self.assertIn("Codex CLI", answer["fallback_reason"])
             self.assertIn("wiki 근거", answer["answer"])
+            self.assertEqual(answer["save_decision"]["save_action"], "skip")
+            self.assertFalse(answer["save_decision"]["save_eligible"])
 
     def test_answer_question_falls_back_when_codex_answer_has_no_evidence(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -175,6 +182,8 @@ class AnswerAndMcpServerTests(unittest.TestCase):
             self.assertTrue(answer["fallback"])
             self.assertEqual(answer["codex_status"], "unsupported_provider_fallback")
             self.assertIn("gemini", answer["fallback_reason"])
+            self.assertEqual(answer["save_decision"]["save_action"], "skip")
+            self.assertFalse(answer["save_decision"]["save_eligible"])
 
     def test_answer_question_uses_question_type_specific_style(self):
         with tempfile.TemporaryDirectory() as tmp:

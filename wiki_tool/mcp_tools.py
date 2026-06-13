@@ -5,6 +5,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
+from .answer_save_decision import decide_answer_save
 from .agent_hooks import (
     draft_concept_update_with_agent as hook_draft_concept_update_with_agent,
     draft_source_summary_with_agent as hook_draft_source_summary_with_agent,
@@ -100,13 +101,13 @@ class WikiToolAdapter:
             if codex_result.ok and not validation_error:
                 payload = codex_result.to_answer_payload()
                 payload["fallback"] = False
-                return payload
+                return _answer_with_save_decision(query, payload)
             fallback = self._answer_question_rule_based(query, context=context, evidence=evidence)
             fallback["provider"] = "rule_based"
             fallback["fallback"] = True
             fallback["fallback_reason"] = codex_result.error or f"Codex answer draft invalid: {validation_error}"
             fallback["codex_status"] = codex_result.status if not validation_error else "codex_invalid_answer"
-            return fallback
+            return _answer_with_save_decision(query, fallback)
         if provider_config.provider != PROVIDER_RULE_BASED:
             answer = self._answer_question_rule_based(query)
             answer["provider"] = "rule_based"
@@ -115,11 +116,11 @@ class WikiToolAdapter:
                 f"{provider_config.provider} provider는 아직 실행 adapter가 없어 rule-based fallback을 사용합니다."
             )
             answer["codex_status"] = "unsupported_provider_fallback"
-            return answer
+            return _answer_with_save_decision(query, answer)
         answer = self._answer_question_rule_based(query)
         answer["provider"] = "rule_based"
         answer["fallback"] = False
-        return answer
+        return _answer_with_save_decision(query, answer)
 
     def _answer_question_rule_based(
         self,
@@ -251,6 +252,11 @@ def _page_type(path: str) -> str:
     if path.endswith("overview.md"):
         return "overview"
     return "page"
+
+
+def _answer_with_save_decision(question: str, answer: dict[str, Any]) -> dict[str, Any]:
+    answer["save_decision"] = decide_answer_save(question, answer).as_dict()
+    return answer
 
 
 def _title(path: Path) -> str:
