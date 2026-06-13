@@ -147,6 +147,7 @@ def worker_success_result(kind: str, message: Any, *, refresh_pages: bool, label
     status_message = None
     if isinstance(message, AgentWorkflowResult):
         status_message = message.status_message
+        refresh_pages = refresh_pages or message.refresh_pages
         message = message.message
     else:
         message = str(message)

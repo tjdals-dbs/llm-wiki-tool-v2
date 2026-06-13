@@ -614,6 +614,7 @@ class DesktopGuiTests(unittest.TestCase):
         self.assertIn("wiki", result.message)
         self.assertIn("위키에 답변 저장됨", result.status_message)
         self.assertEqual(len(adapter.saved_updates), 1)
+        self.assertTrue(result.refresh_pages)
         saved = adapter.saved_updates[0]
         self.assertEqual(saved["question"], "CAPM은 무엇인가?")
         self.assertIn("wiki", saved["answer"])
@@ -642,6 +643,7 @@ class DesktopGuiTests(unittest.TestCase):
         result = presenter.ask_agent_workflow("모르는 질문")
 
         self.assertEqual(adapter.saved_updates, [])
+        self.assertFalse(result.refresh_pages)
         self.assertIn("근거가 부족합니다.", result.message)
         self.assertIn("답변 저장 제외", result.status_message)
         self.assertIn("근거가 부족해", result.status_message)
@@ -654,6 +656,7 @@ class DesktopGuiTests(unittest.TestCase):
         result = presenter.ask_agent_workflow("CAPM은 무엇인가?")
 
         self.assertEqual(adapter.saved_updates, [])
+        self.assertFalse(result.refresh_pages)
         self.assertIn("wiki", result.message)
         self.assertIn("답변 저장 실패", result.status_message)
         self.assertIn("save unavailable", result.status_message)
@@ -672,6 +675,7 @@ class DesktopGuiTests(unittest.TestCase):
 
         self.assertIn("기존 답변 페이지 업데이트됨", result.status_message)
         self.assertIn("wiki/answers/capm.md", result.status_message)
+        self.assertTrue(result.refresh_pages)
 
     def test_mcp_route_falls_back_to_direct_adapter_when_registry_fails(self):
         adapter = FakeAdapter()
@@ -828,6 +832,17 @@ class DesktopGuiTests(unittest.TestCase):
         self.assertEqual(result.message, workflow_result.message)
         self.assertEqual(result.route_line, "agent route: mcp/codex")
         self.assertEqual(result.status_message, "위키에 답변 저장됨: wiki/answers/capm.md")
+
+    def test_worker_success_result_uses_agent_workflow_refresh_flag(self):
+        workflow_result = AgentWorkflowResult(
+            message="답변\n\nagent route: mcp/codex\nstatus: ok",
+            status_message="위키에 답변 저장됨: wiki/answers/capm.md",
+            refresh_pages=True,
+        )
+
+        result = worker_success_result("agent", workflow_result, refresh_pages=False)
+
+        self.assertTrue(result.refresh_pages)
 
     def test_maintenance_worker_success_result_preserves_report_format(self):
         report = "Maintenance Run Report\n상태: 성공"

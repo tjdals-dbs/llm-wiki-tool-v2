@@ -146,6 +146,36 @@ class McpToolAdapterTests(unittest.TestCase):
             self.assertEqual(second_metadata["question"], "CAPM은 무엇인가?")
             self.assertIn("갱신된 답변", answer_path.read_text(encoding="utf-8"))
 
+    def test_apply_wiki_update_refreshes_navigation_graph_and_log_for_answer(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            adapter = build_sample_wiki(root)
+
+            result = adapter.apply_wiki_update(
+                question="CAPM은 무엇인가?",
+                answer="CAPM 답변",
+                used_pages=[{"path": "wiki/concepts/capm.md"}],
+                related_pages=[],
+                evidence=[{"path": "wiki/concepts/capm.md", "text": "근거"}],
+                status="ok",
+                suggested_title="CAPM은 무엇인가",
+            )
+
+            page_paths = [page["path"] for page in adapter.list_wiki_pages()]
+            graph = adapter.get_wiki_graph()
+            graph_paths = [node["path"] for node in graph["nodes"]]
+            index = (root / "wiki" / "index.md").read_text(encoding="utf-8")
+            overview = (root / "wiki" / "overview.md").read_text(encoding="utf-8")
+            log = (root / "wiki" / "log.md").read_text(encoding="utf-8")
+
+            self.assertTrue(result["navigation_refreshed"])
+            self.assertTrue(result["graph_refreshed"])
+            self.assertIn(result["path"], page_paths)
+            self.assertIn(result["path"], graph_paths)
+            self.assertIn(result["path"].replace("wiki/", "", 1), index)
+            self.assertIn("answer pages: 1", overview)
+            self.assertIn(f"answer saved: {result['path']}", log)
+
     def test_pipeline_tool_methods_return_korean_status_counts(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

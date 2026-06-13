@@ -42,6 +42,13 @@ class AgentRouteResult:
 class AgentWorkflowResult:
     message: str
     status_message: str = ""
+    refresh_pages: bool = False
+
+
+@dataclass(frozen=True)
+class AgentAutoSaveResult:
+    status_message: str
+    refresh_pages: bool = False
 
 
 @dataclass(frozen=True)
@@ -273,16 +280,18 @@ class DesktopGuiPresenter:
                 lines.append(f"- {item.get('path', '')}: {item.get('title', '')}")
         else:
             lines.append("- 없음")
+        save_result = self._auto_save_agent_answer(query, result)
         return AgentWorkflowResult(
             message="\n".join(lines),
-            status_message=self._auto_save_agent_answer(query, result),
+            status_message=save_result.status_message,
+            refresh_pages=save_result.refresh_pages,
         )
 
-    def _auto_save_agent_answer(self, query: str, result: AgentRouteResult) -> str:
+    def _auto_save_agent_answer(self, query: str, result: AgentRouteResult) -> AgentAutoSaveResult:
         decision = result.save_decision or {}
         if decision.get("save_action") != "save" or not bool(decision.get("save_eligible")):
             reason = str(decision.get("save_reason") or "저장 대상이 아닌 답변입니다.")
-            return f"답변 저장 제외: {reason}"
+            return AgentAutoSaveResult(f"답변 저장 제외: {reason}")
         try:
             saved = self.adapter.apply_wiki_update(
                 question=query,
@@ -294,11 +303,11 @@ class DesktopGuiPresenter:
                 suggested_title=str(decision.get("suggested_title") or ""),
             )
         except Exception as exc:
-            return f"답변 저장 실패: {exc}"
+            return AgentAutoSaveResult(f"답변 저장 실패: {exc}")
         path = str(saved.get("path") or "wiki/answers")
         if saved.get("updated") and not saved.get("created"):
-            return f"기존 답변 페이지 업데이트됨: {path}"
-        return f"위키에 답변 저장됨: {path}"
+            return AgentAutoSaveResult(f"기존 답변 페이지 업데이트됨: {path}", refresh_pages=True)
+        return AgentAutoSaveResult(f"위키에 답변 저장됨: {path}", refresh_pages=True)
 
 
 def _route_result_from_answer(answer: dict[str, Any], *, route: str, question: str = "") -> AgentRouteResult:

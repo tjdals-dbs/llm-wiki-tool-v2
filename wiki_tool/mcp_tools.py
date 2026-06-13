@@ -236,11 +236,17 @@ class WikiToolAdapter:
             ),
             encoding="utf-8",
         )
+        self.refresh_navigation_pages()
+        build_wiki_graph(self.config)
+        relative_path = path.relative_to(self.config.root).as_posix()
+        _append_answer_log(self.config.wiki_dir / "log.md", relative_path, updated=existed)
         return {
-            "path": path.relative_to(self.config.root).as_posix(),
+            "path": relative_path,
             "status": status,
             "created": not existed,
             "updated": existed,
+            "navigation_refreshed": True,
+            "graph_refreshed": True,
         }
 
     def run_wiki_lint(self) -> dict[str, Any]:
@@ -559,6 +565,13 @@ def _answer_metadata_value(path: Path, key: str) -> str:
         if line.startswith(prefix):
             return line.split(":", 1)[1].strip()
     return ""
+
+
+def _append_answer_log(log_path: Path, answer_path: str, *, updated: bool) -> None:
+    existing = log_path.read_text(encoding="utf-8") if log_path.exists() else "# Wiki Log\n\n"
+    action = "updated" if updated else "saved"
+    line = f"- answer {action}: {answer_path}"
+    log_path.write_text(existing.rstrip() + f"\n\n{line}\n", encoding="utf-8")
 
 
 def _utc_timestamp() -> str:
