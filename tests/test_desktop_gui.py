@@ -11,6 +11,7 @@ from wiki_tool.desktop_gui import (
     GUI_PANEL_WEIGHTS,
     GUI_STYLE_COLORS,
     AgentRouteResult,
+    AgentWorkflowResult,
     AGENT_PROVIDER_DETAIL_DEFAULT_VISIBLE,
     DesktopGuiPresenter,
     DirectAdapterAgentFallback,
@@ -54,6 +55,9 @@ from wiki_tool.user_domain import create_user_domain
 class FakeAdapter:
     def __init__(self):
         self.calls = []
+        self.saved_updates = []
+        self.fail_save = False
+        self.answer_payload = None
 
     def scan_raw_sources(self):
         self.calls.append("scan")
@@ -90,14 +94,28 @@ class FakeAdapter:
 
     def answer_question(self, query):
         self.calls.append(("answer", query))
+        if self.answer_payload is not None:
+            return self.answer_payload
         return {
             "status": "ok",
             "answer": "wiki 근거를 기준으로 답합니다.",
             "used_pages": [{"path": "wiki/concepts/capm.md", "title": "CAPM"}],
             "related_pages": [],
+            "evidence": [{"path": "wiki/sources/capm.md", "quote": "CAPM"}],
             "provider": "rule_based",
             "fallback": False,
+            "save_decision": {
+                "save_action": "save",
+                "save_eligible": True,
+                "save_reason": "근거 문서가 있어 위키 저장 대상으로 판단했습니다.",
+            },
         }
+
+    def apply_wiki_update(self, **kwargs):
+        if self.fail_save:
+            raise RuntimeError("save unavailable")
+        self.saved_updates.append(kwargs)
+        return {"path": "wiki/answers/capm.md", "status": kwargs.get("status", "ok")}
 
     def list_wiki_pages(self, page_type=None):
         pages = [
@@ -583,6 +601,58 @@ class DesktopGuiTests(unittest.TestCase):
         self.assertIn("status: ok", message)
         self.assertIn("wiki/concepts/capm.md", message)
 
+    def test_agent_workflow_auto_saves_save_eligible_answer(self):
+        adapter = FakeAdapter()
+        presenter = DesktopGuiPresenter(adapter, agent_route=DirectAdapterAgentFallback(adapter))
+
+        result = presenter.ask_agent_workflow("CAPM은 무엇인가?")
+
+        self.assertIn("wiki", result.message)
+        self.assertIn("위키에 답변 저장됨", result.status_message)
+        self.assertEqual(len(adapter.saved_updates), 1)
+        saved = adapter.saved_updates[0]
+        self.assertEqual(saved["question"], "CAPM은 무엇인가?")
+        self.assertIn("wiki", saved["answer"])
+        self.assertEqual(saved["status"], "ok")
+        self.assertEqual(saved["used_pages"], [{"path": "wiki/concepts/capm.md", "title": "CAPM"}])
+        self.assertEqual(saved["evidence"], [{"path": "wiki/sources/capm.md", "quote": "CAPM"}])
+
+    def test_agent_workflow_skips_answer_when_save_decision_says_skip(self):
+        adapter = FakeAdapter()
+        adapter.answer_payload = {
+            "status": "no_evidence",
+            "answer": "근거가 부족합니다.",
+            "used_pages": [],
+            "related_pages": [],
+            "evidence": [],
+            "fallback": False,
+            "save_decision": {
+                "save_action": "skip",
+                "save_eligible": False,
+                "save_reason": "근거가 부족해 위키에 저장하지 않습니다.",
+            },
+        }
+        presenter = DesktopGuiPresenter(adapter, agent_route=DirectAdapterAgentFallback(adapter))
+
+        result = presenter.ask_agent_workflow("모르는 질문")
+
+        self.assertEqual(adapter.saved_updates, [])
+        self.assertIn("근거가 부족합니다.", result.message)
+        self.assertIn("답변 저장 제외", result.status_message)
+        self.assertIn("근거가 부족해", result.status_message)
+
+    def test_agent_workflow_preserves_answer_when_auto_save_fails(self):
+        adapter = FakeAdapter()
+        adapter.fail_save = True
+        presenter = DesktopGuiPresenter(adapter, agent_route=DirectAdapterAgentFallback(adapter))
+
+        result = presenter.ask_agent_workflow("CAPM은 무엇인가?")
+
+        self.assertEqual(adapter.saved_updates, [])
+        self.assertIn("wiki", result.message)
+        self.assertIn("답변 저장 실패", result.status_message)
+        self.assertIn("save unavailable", result.status_message)
+
     def test_mcp_route_falls_back_to_direct_adapter_when_registry_fails(self):
         adapter = FakeAdapter()
 
@@ -726,6 +796,18 @@ class DesktopGuiTests(unittest.TestCase):
         self.assertEqual(result.route_line, "agent route: mcp/codex")
         self.assertFalse(result.refresh_pages)
         self.assertIn("status: ok", result.message)
+
+    def test_worker_success_result_preserves_agent_save_status_message(self):
+        workflow_result = AgentWorkflowResult(
+            message="답변\n\nagent route: mcp/codex\nstatus: ok",
+            status_message="위키에 답변 저장됨: wiki/answers/capm.md",
+        )
+
+        result = worker_success_result("agent", workflow_result, refresh_pages=False)
+
+        self.assertEqual(result.message, workflow_result.message)
+        self.assertEqual(result.route_line, "agent route: mcp/codex")
+        self.assertEqual(result.status_message, "위키에 답변 저장됨: wiki/answers/capm.md")
 
     def test_maintenance_worker_success_result_preserves_report_format(self):
         report = "Maintenance Run Report\n상태: 성공"

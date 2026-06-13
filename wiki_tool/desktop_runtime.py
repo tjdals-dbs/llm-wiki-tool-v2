@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from .config import DomainConfig
-from .desktop_presenter import DesktopGuiPresenter, DirectAdapterAgentFallback, McpCodexAgentRoute, _agent_route_line
+from .desktop_presenter import AgentWorkflowResult, DesktopGuiPresenter, DirectAdapterAgentFallback, McpCodexAgentRoute, _agent_route_line
 from .mcp_tools import WikiToolAdapter
 
 
@@ -19,6 +19,7 @@ class GuiTaskResult:
     message: str
     refresh_pages: bool = False
     route_line: str | None = None
+    status_message: str | None = None
     error: str | None = None
     label: str = "작업"
 
@@ -29,7 +30,7 @@ class GuiTaskSpec:
     kind: str
     label: str
     pending_message: str
-    task: Callable[[], str]
+    task: Callable[[], Any]
     refresh_pages: bool
 
 
@@ -142,8 +143,22 @@ def build_domain_runtime(config: DomainConfig, *, adapter_factory: Callable[[Dom
     )
 
 
-def worker_success_result(kind: str, message: str, *, refresh_pages: bool, label: str = "작업") -> GuiTaskResult:
-    return GuiTaskResult(kind=kind, ok=True, message=message, refresh_pages=refresh_pages, route_line=_agent_route_line(message) if kind == "agent" else None, label=label)
+def worker_success_result(kind: str, message: Any, *, refresh_pages: bool, label: str = "작업") -> GuiTaskResult:
+    status_message = None
+    if isinstance(message, AgentWorkflowResult):
+        status_message = message.status_message
+        message = message.message
+    else:
+        message = str(message)
+    return GuiTaskResult(
+        kind=kind,
+        ok=True,
+        message=message,
+        refresh_pages=refresh_pages,
+        route_line=_agent_route_line(message) if kind == "agent" else None,
+        status_message=status_message,
+        label=label,
+    )
 
 
 def worker_failure_result(kind: str, label: str, error: BaseException, *, refresh_pages: bool = False) -> GuiTaskResult:
@@ -157,7 +172,7 @@ def create_background_task_worker_class(QObject: Any, Signal: Any) -> type[Any]:
         succeeded = Signal(object)
         failed = Signal(object)
 
-        def __init__(self, kind: str, label: str, task: Callable[[], str], *, refresh_pages: bool) -> None:
+        def __init__(self, kind: str, label: str, task: Callable[[], Any], *, refresh_pages: bool) -> None:
             super().__init__()
             self.kind = kind
             self.label = label

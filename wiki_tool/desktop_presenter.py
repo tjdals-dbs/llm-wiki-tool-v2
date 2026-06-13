@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
@@ -31,8 +31,17 @@ class AgentRouteResult:
     answer: str
     used_pages: list[dict[str, Any]]
     related_pages: list[dict[str, Any]]
+    question: str = ""
+    evidence: list[dict[str, Any]] = field(default_factory=list)
+    save_decision: dict[str, Any] = field(default_factory=dict)
     error: str | None = None
     fallback_reason: str | None = None
+
+
+@dataclass(frozen=True)
+class AgentWorkflowResult:
+    message: str
+    status_message: str = ""
 
 
 @dataclass(frozen=True)
@@ -96,7 +105,7 @@ class DirectAdapterAgentFallback:
 
     def ask(self, query: str) -> AgentRouteResult:
         answer = self.adapter.answer_question(query)
-        return _route_result_from_answer(answer, route="direct fallback")
+        return _route_result_from_answer(answer, route="direct fallback", question=query)
 
 
 class McpCodexAgentRoute:
@@ -125,7 +134,7 @@ class McpCodexAgentRoute:
             registry = self.registry_factory(self.config)
             answer_tool = registry["answer_question"]
             answer = answer_tool(query)
-            result = _route_result_from_answer(answer, route=route)
+            result = _route_result_from_answer(answer, route=route, question=query)
             if result.route == route and answer.get("fallback") and provider == PROVIDER_CODEX:
                 return AgentRouteResult(
                     route="mcp/codex fallback",
@@ -133,6 +142,9 @@ class McpCodexAgentRoute:
                     answer=result.answer,
                     used_pages=result.used_pages,
                     related_pages=result.related_pages,
+                    question=result.question,
+                    evidence=result.evidence,
+                    save_decision=result.save_decision,
                     error=result.error,
                     fallback_reason=result.fallback_reason,
                 )
@@ -147,6 +159,9 @@ class McpCodexAgentRoute:
                 answer=result.answer,
                 used_pages=result.used_pages,
                 related_pages=result.related_pages,
+                question=result.question,
+                evidence=result.evidence,
+                save_decision=result.save_decision,
                 error=str(exc),
                 fallback_reason="MCP route 실행 실패로 direct adapter fallback 사용",
             )
@@ -228,8 +243,11 @@ class DesktopGuiPresenter:
         )
 
     def ask_agent(self, query: str) -> str:
+        return self.ask_agent_workflow(query).message
+
+    def ask_agent_workflow(self, query: str) -> AgentWorkflowResult:
         if not query.strip():
-            return "질문을 입력하세요."
+            return AgentWorkflowResult("질문을 입력하세요.")
         result = self.agent_route.ask(query)
         lines = [
             result.answer,
@@ -255,10 +273,32 @@ class DesktopGuiPresenter:
                 lines.append(f"- {item.get('path', '')}: {item.get('title', '')}")
         else:
             lines.append("- 없음")
-        return "\n".join(lines)
+        return AgentWorkflowResult(
+            message="\n".join(lines),
+            status_message=self._auto_save_agent_answer(query, result),
+        )
+
+    def _auto_save_agent_answer(self, query: str, result: AgentRouteResult) -> str:
+        decision = result.save_decision or {}
+        if decision.get("save_action") != "save" or not bool(decision.get("save_eligible")):
+            reason = str(decision.get("save_reason") or "저장 대상이 아닌 답변입니다.")
+            return f"답변 저장 제외: {reason}"
+        try:
+            saved = self.adapter.apply_wiki_update(
+                question=query,
+                answer=result.answer,
+                used_pages=result.used_pages,
+                related_pages=result.related_pages,
+                evidence=result.evidence,
+                status=result.status,
+            )
+        except Exception as exc:
+            return f"답변 저장 실패: {exc}"
+        path = str(saved.get("path") or "wiki/answers")
+        return f"위키에 답변 저장됨: {path}"
 
 
-def _route_result_from_answer(answer: dict[str, Any], *, route: str) -> AgentRouteResult:
+def _route_result_from_answer(answer: dict[str, Any], *, route: str, question: str = "") -> AgentRouteResult:
     fallback = bool(answer.get("fallback"))
     status = str(answer.get("status") or ("fallback" if fallback else "ok"))
     if fallback and answer.get("codex_status"):
@@ -269,6 +309,9 @@ def _route_result_from_answer(answer: dict[str, Any], *, route: str) -> AgentRou
         answer=str(answer.get("answer") or ""),
         used_pages=list(answer.get("used_pages") or []),
         related_pages=list(answer.get("related_pages") or []),
+        question=question,
+        evidence=list(answer.get("evidence") or []),
+        save_decision=dict(answer.get("save_decision") or {}),
         fallback_reason=str(answer["fallback_reason"]) if answer.get("fallback_reason") else None,
         error=str(answer["error"]) if answer.get("error") else None,
     )

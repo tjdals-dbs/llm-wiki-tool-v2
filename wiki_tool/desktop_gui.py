@@ -29,6 +29,7 @@ from .desktop_navigation import (
 from .desktop_presenter import (
     AGENT_PROVIDER_DETAIL_DEFAULT_VISIBLE,
     AgentRouteResult,
+    AgentWorkflowResult,
     DesktopGuiPresenter,
     DirectAdapterAgentFallback,
     McpCodexAgentRoute,
@@ -751,11 +752,11 @@ def _create_desktop_window(config: DomainConfig, deps: dict[str, Any]) -> Any:
             self._start_background_task(
                 kind="agent",
                 label="에이전트 질문",
-                task=lambda: self.presenter.ask_agent(query),
+                task=lambda: self.presenter.ask_agent_workflow(query),
                 refresh_pages=False,
             )
 
-        def _start_background_task(self, *, kind: str, label: str, task: Callable[[], str], refresh_pages: bool) -> None:
+        def _start_background_task(self, *, kind: str, label: str, task: Callable[[], Any], refresh_pages: bool) -> None:
             thread = QThread(self)
             worker = BackgroundTaskWorker(kind, label, task, refresh_pages=refresh_pages)
             worker.moveToThread(thread)
@@ -787,6 +788,8 @@ def _create_desktop_window(config: DomainConfig, deps: dict[str, Any]) -> Any:
                 else:
                     self._chat_messages.append({"role": "assistant", "content": result.message, "status": "complete" if result.ok else "failed"})
                 self._render_chat_log()
+                if result.status_message:
+                    self._set_status_text(result.status_message)
             elif result.kind == "maintenance":
                 self._maintenance_running = False
                 self._set_maintenance_enabled(True)
