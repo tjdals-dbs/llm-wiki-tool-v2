@@ -93,6 +93,10 @@ class FakeAdapter:
         self.calls.append("lint")
         return {"ok": True, "issues": []}
 
+    def analyze_answer_candidates(self):
+        self.calls.append("answers")
+        return {"candidate_count": 2, "skipped_count": 1, "candidates": [], "skipped": []}
+
     def answer_question(self, query):
         self.calls.append(("answer", query))
         if self.answer_payload is not None:
@@ -946,13 +950,14 @@ class DesktopGuiTests(unittest.TestCase):
         self.assertIn("raw scan: 신규 1개, 변경 0개, 유지 0개, 제외 0개", status)
         self.assertIn("source summary: provider codex, 요약 1개, Codex 1개, fallback 0개, 검토 필요 0개", status)
         self.assertIn("concept organize: provider codex, 승격 1개, 병합 0개, 건너뜀 0개, Codex 1개, fallback 1개", status)
+        self.assertIn("answer candidates: 2개, skipped 1개", status)
         self.assertIn("lint: 통과, issue 0개", status)
         self.assertIn("navigation: 갱신", status)
         self.assertIn("안전성: raw 불변성 확인 불가, lint 통과, fallback 발생", status)
         self.assertIn("산출물: source 1개, concept 변경 1개, graph node 2개, edge 0개", status)
         self.assertIn("원인:", status)
         self.assertIn("concept organize fallback 1개", status)
-        self.assertEqual(adapter.calls, ["scan", "summarize", "organize", "graph", "lint"])
+        self.assertEqual(adapter.calls, ["scan", "summarize", "organize", "answers", "graph", "lint"])
 
     def test_maintenance_report_marks_success_when_every_stage_passes(self):
         adapter = FakeAdapter()

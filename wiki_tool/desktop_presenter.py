@@ -224,10 +224,20 @@ class DesktopGuiPresenter:
         scan = self.adapter.scan_raw_sources()
         summarize = self.adapter.summarize_new_sources()
         organize = self.adapter.organize_pending_sources()
+        answers = self.adapter.analyze_answer_candidates()
         graph = self.adapter.get_wiki_graph()
         lint = self.adapter.run_wiki_lint()
         raw_after = _raw_snapshot(self.adapter)
-        return format_maintenance_report(scan, summarize, organize, lint, graph, raw_before=raw_before, raw_after=raw_after)
+        return format_maintenance_report(
+            scan,
+            summarize,
+            organize,
+            lint,
+            graph,
+            answers=answers,
+            raw_before=raw_before,
+            raw_after=raw_after,
+        )
 
     def wiki_status(self) -> str:
         sources = self.adapter.list_wiki_pages(page_type="source")
@@ -350,6 +360,7 @@ def format_maintenance_report(
     lint: dict[str, Any],
     graph: dict[str, Any],
     *,
+    answers: dict[str, Any] | None = None,
     raw_before: dict[str, str] | None = None,
     raw_after: dict[str, str] | None = None,
 ) -> str:
@@ -375,6 +386,8 @@ def format_maintenance_report(
     lint_status = "통과" if lint_ok else "실패"
     fallback_status = "fallback 발생" if fallback_count else "fallback 없음"
     navigation_refreshed = bool(summarize.get("navigation_refreshed") or organize.get("navigation_refreshed"))
+    answer_candidate_count = int((answers or {}).get("candidate_count", 0) or 0)
+    answer_skipped_count = int((answers or {}).get("skipped_count", 0) or 0)
     navigation_status = "갱신" if navigation_refreshed else "실행 안 함"
 
     lines = [
@@ -400,6 +413,7 @@ def format_maintenance_report(
             f"fallback {concept_fallback}개"
         ),
         f"lint: {lint_status}, issue {len(lint_issues)}개",
+        f"answer candidates: {answer_candidate_count}개, skipped {answer_skipped_count}개",
         f"navigation: {navigation_status}",
         f"안전성: {raw_integrity}, lint {lint_status}, {fallback_status}",
         (

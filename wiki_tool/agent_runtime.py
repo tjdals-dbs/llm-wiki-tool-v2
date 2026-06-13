@@ -12,12 +12,14 @@ def run_maintenance_once(config: DomainConfig) -> dict[str, Any]:
     scan = adapter.scan_raw_sources()
     summarize = adapter.summarize_new_sources()
     organize = adapter.organize_pending_sources()
+    answers = adapter.analyze_answer_candidates()
     review = _review_pipeline_if_codex_used(config, summarize, organize)
     lint = adapter.run_wiki_lint()
     return {
         "scan": scan,
         "summarize": summarize,
         "organize": organize,
+        "answers": answers,
         "review": review,
         "lint": lint,
     }

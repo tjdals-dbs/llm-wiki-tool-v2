@@ -176,6 +176,26 @@ class McpToolAdapterTests(unittest.TestCase):
             self.assertIn("answer pages: 1", overview)
             self.assertIn(f"answer saved: {result['path']}", log)
 
+    def test_adapter_analyzes_saved_answer_candidates(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            adapter = build_sample_wiki(root)
+            saved = adapter.apply_wiki_update(
+                question="CAPM은 무엇인가?",
+                answer="CAPM is a model.",
+                used_pages=[{"path": "wiki/concepts/capm.md"}],
+                related_pages=[],
+                evidence=[{"path": "wiki/concepts/capm.md", "text": "Evidence"}],
+                status="ok",
+                suggested_title="CAPM은 무엇인가",
+            )
+
+            result = adapter.analyze_answer_candidates()
+
+            self.assertEqual(result["candidate_count"], 1)
+            self.assertEqual(result["skipped_count"], 0)
+            self.assertEqual(result["candidates"][0]["answer_path"], saved["path"])
+
     def test_pipeline_tool_methods_return_korean_status_counts(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

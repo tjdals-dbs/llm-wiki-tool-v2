@@ -85,6 +85,8 @@ class AgentRuntimeTests(unittest.TestCase):
             self.assertEqual(result["scan"]["new_count"], 1)
             self.assertEqual(result["summarize"]["summarized_count"], 1)
             self.assertEqual(result["organize"]["promoted_count"], 1)
+            self.assertEqual(result["answers"]["candidate_count"], 0)
+            self.assertEqual(result["answers"]["skipped_count"], 0)
             self.assertEqual(result["review"]["status"], "skipped")
             self.assertTrue((root / "wiki" / "concepts" / "capm.md").exists())
 
