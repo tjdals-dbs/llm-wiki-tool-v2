@@ -181,11 +181,29 @@ def _draft_skip_reason(
         return "status가 ok가 아니라 concept draft 대상에서 제외합니다."
     if not str(page.get("answer") or candidate.get("answer_preview") or "").strip():
         return "answer 본문이 비어 있어 concept draft 대상에서 제외합니다."
-    if not evidence:
+    if not _has_source_evidence(candidate, page, evidence):
         return "source evidence가 없어 concept draft 대상에서 제외합니다."
     if _is_generic_candidate_title(candidate_title):
         return "candidate title이 비어 있거나 너무 일반적이라 concept draft 대상에서 제외합니다."
     return ""
+
+
+def _has_source_evidence(
+    candidate: dict[str, Any],
+    page: dict[str, Any],
+    evidence: list[dict[str, str]],
+) -> bool:
+    paths: list[str] = []
+    paths.extend(str(item.get("path") or "") for item in evidence)
+    paths.extend(str(path or "") for path in candidate.get("used_pages", []) or [])
+    paths.extend(str(path or "") for path in page.get("used_pages", []) or [])
+    return any(_is_source_page_path(path) for path in paths)
+
+
+def _is_source_page_path(path: str) -> bool:
+    normalized = path.replace("\\", "/").strip()
+    normalized = normalized.split("#", 1)[0].split("?", 1)[0].lstrip("./")
+    return normalized.startswith("wiki/sources/") or normalized.startswith("sources/")
 
 
 def _draft_summary(answer: str) -> str:

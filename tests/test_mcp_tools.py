@@ -207,7 +207,7 @@ class McpToolAdapterTests(unittest.TestCase):
                 answer="CAPM is a model.",
                 used_pages=[{"path": "wiki/concepts/capm.md"}],
                 related_pages=[],
-                evidence=[{"path": "wiki/concepts/capm.md", "text": "Evidence"}],
+                evidence=[{"path": "wiki/sources/capm.md", "text": "Evidence"}],
                 status="ok",
                 suggested_title="CAPM은 무엇인가",
             )

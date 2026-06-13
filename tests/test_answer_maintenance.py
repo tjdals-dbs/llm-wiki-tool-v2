@@ -154,7 +154,7 @@ class AnswerMaintenanceTests(unittest.TestCase):
                 answer="CAPM explains expected return with systematic risk.",
                 used_pages=[{"path": "wiki/concepts/capm.md"}],
                 related_pages=[],
-                evidence=[{"path": "wiki/concepts/capm.md", "text": "CAPM evidence"}],
+                evidence=[{"path": "wiki/sources/capm.md", "text": "CAPM source evidence"}],
                 status="ok",
                 suggested_title="CAPM은 무엇인가",
             )
@@ -167,8 +167,72 @@ class AnswerMaintenanceTests(unittest.TestCase):
             self.assertEqual(draft["target_concept_path"], "wiki/concepts/capm.md")
             self.assertEqual(draft["candidate_title"], "CAPM은 무엇인가")
             self.assertIn("expected return", draft["draft_summary"])
-            self.assertEqual(draft["evidence"][0]["text"], "CAPM evidence")
+            self.assertEqual(draft["evidence"][0]["text"], "CAPM source evidence")
             self.assertEqual(draft["used_pages"], ["wiki/concepts/capm.md"])
+
+    def test_source_evidence_without_wiki_prefix_allows_draft(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            domain = load_domain_config(write_domain(root), root=root)
+            adapter = WikiToolAdapter(domain)
+            adapter.apply_wiki_update(
+                question="분산 투자는 무엇인가?",
+                answer="분산 투자는 위험을 나누는 방법입니다.",
+                used_pages=[],
+                related_pages=[],
+                evidence=[{"path": "sources/diversification.md", "text": "분산 투자 source evidence"}],
+                status="ok",
+                suggested_title="분산 투자",
+            )
+
+            result = draft_answer_concept_updates(domain)
+
+            self.assertEqual(result["draft_count"], 1)
+            self.assertEqual(result["drafts"][0]["draft_action"], "new_concept_candidate")
+
+    def test_source_used_page_allows_draft_even_without_evidence_items(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            domain = load_domain_config(write_domain(root), root=root)
+            adapter = WikiToolAdapter(domain)
+            adapter.apply_wiki_update(
+                question="JWT는 무엇인가?",
+                answer="JWT는 claim을 담는 token 형식입니다.",
+                used_pages=[{"path": "wiki/sources/jwt.md"}],
+                related_pages=[],
+                evidence=[],
+                status="ok",
+                suggested_title="JWT",
+            )
+
+            result = draft_answer_concept_updates(domain)
+
+            self.assertEqual(result["draft_count"], 1)
+            self.assertEqual(result["drafts"][0]["draft_action"], "new_concept_candidate")
+
+    def test_concept_only_evidence_is_skipped_for_draft(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            domain = load_domain_config(write_domain(root), root=root)
+            adapter = WikiToolAdapter(domain)
+            (root / "wiki" / "concepts").mkdir(parents=True)
+            (root / "wiki" / "concepts" / "capm.md").write_text("# CAPM\n", encoding="utf-8")
+            adapter.apply_wiki_update(
+                question="CAPM은 무엇인가?",
+                answer="CAPM is a model.",
+                used_pages=[{"path": "wiki/concepts/capm.md"}],
+                related_pages=[],
+                evidence=[{"path": "wiki/concepts/capm.md", "text": "Concept evidence"}],
+                status="ok",
+                suggested_title="CAPM은 무엇인가",
+            )
+
+            result = draft_answer_concept_updates(domain)
+
+            self.assertEqual(result["draft_count"], 0)
+            self.assertEqual(result["skipped_count"], 1)
+            self.assertEqual(result["skipped"][0]["draft_action"], "skip")
+            self.assertIn("source evidence", result["skipped"][0]["reason"])
 
     def test_answer_without_existing_concept_creates_new_concept_candidate_draft(self):
         with tempfile.TemporaryDirectory() as tmp:
