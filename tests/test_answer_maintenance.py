@@ -1,6 +1,7 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from wiki_tool.answer_maintenance import (
     analyze_answer_candidates,
@@ -357,6 +358,36 @@ class AnswerMaintenanceTests(unittest.TestCase):
             self.assertTrue(result["navigation_refreshed"])
             self.assertTrue(result["graph_refreshed"])
             self.assertIn("answer concept update applied", (root / "wiki" / "log.md").read_text(encoding="utf-8"))
+
+    def test_apply_answer_concept_update_uses_supplied_draft_result(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            domain = load_domain_config(write_domain(root), root=root)
+            adapter = WikiToolAdapter(domain)
+            concept = root / "wiki" / "concepts" / "jwt.md"
+            concept.parent.mkdir(parents=True)
+            concept.write_text("# JWT\n\n## Definition\n\nHuman-authored definition.\n", encoding="utf-8")
+            (root / "wiki" / "sources").mkdir(parents=True)
+            (root / "wiki" / "sources" / "jwt.md").write_text("# JWT Source\n", encoding="utf-8")
+            adapter.apply_wiki_update(
+                question="What is JWT?",
+                answer="JWT is a compact token format used to carry claims between systems.",
+                used_pages=[{"path": "wiki/concepts/jwt.md"}],
+                related_pages=[],
+                evidence=[{"path": "wiki/sources/jwt.md", "text": "JWT source evidence"}],
+                status="ok",
+                suggested_title="JWT",
+            )
+            draft_result = draft_answer_concept_updates(domain)
+
+            with patch(
+                "wiki_tool.answer_maintenance.draft_answer_concept_updates",
+                side_effect=AssertionError("drafts should be reused"),
+            ):
+                result = apply_answer_concept_updates(domain, draft_result=draft_result)
+
+            self.assertEqual(result["applied_count"], 1)
+            self.assertIn("## Answer-Derived Notes", concept.read_text(encoding="utf-8"))
 
     def test_apply_answer_concept_update_skips_without_source_evidence(self):
         with tempfile.TemporaryDirectory() as tmp:

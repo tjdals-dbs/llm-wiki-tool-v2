@@ -122,6 +122,59 @@ class AgentRuntimeTests(unittest.TestCase):
             self.assertEqual(result["answer_concept_updates"]["applied_count"], 1)
             self.assertIn("## Answer-Derived Notes", concept.read_text(encoding="utf-8"))
 
+    def test_run_maintenance_once_reuses_answer_concept_draft_result(self):
+        class FakeRuntimeAdapter:
+            instances = []
+
+            def __init__(self, _config):
+                self.calls = []
+                self.draft_result = {"draft_count": 1, "skipped_count": 0, "drafts": [], "skipped": []}
+                self.applied_draft_result = None
+                FakeRuntimeAdapter.instances.append(self)
+
+            def scan_raw_sources(self):
+                self.calls.append("scan")
+                return {"new_count": 0}
+
+            def summarize_new_sources(self):
+                self.calls.append("summarize")
+                return {"codex_used_count": 0, "fallback_count": 0}
+
+            def organize_pending_sources(self):
+                self.calls.append("organize")
+                return {"codex_used_count": 0, "fallback_count": 0}
+
+            def analyze_answer_candidates(self):
+                self.calls.append("answers")
+                return {"candidate_count": 1, "skipped_count": 0}
+
+            def draft_answer_concept_updates(self):
+                self.calls.append("answer_drafts")
+                return self.draft_result
+
+            def apply_answer_concept_updates(self, draft_result=None):
+                self.calls.append("answer_updates")
+                self.applied_draft_result = draft_result
+                return {"applied_count": 0, "skipped_count": 0}
+
+            def run_wiki_lint(self):
+                self.calls.append("lint")
+                return {"ok": True, "issues": []}
+
+        with tempfile.TemporaryDirectory() as tmp, patch(
+            "wiki_tool.agent_runtime.WikiToolAdapter",
+            FakeRuntimeAdapter,
+        ):
+            root = Path(tmp)
+            domain = load_domain_config(write_domain(root), root=root)
+
+            result = run_maintenance_once(domain)
+
+        adapter = FakeRuntimeAdapter.instances[0]
+        self.assertEqual(adapter.calls, ["scan", "summarize", "organize", "answers", "answer_drafts", "answer_updates", "lint"])
+        self.assertIs(adapter.applied_draft_result, adapter.draft_result)
+        self.assertIs(result["answer_concept_drafts"], adapter.draft_result)
+
     def test_run_maintenance_once_reviews_codex_pipeline_without_failing_on_review_error(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

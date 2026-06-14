@@ -204,8 +204,8 @@ class WikiToolAdapter:
     def draft_answer_concept_updates(self) -> dict[str, Any]:
         return draft_answer_concept_updates(self.config)
 
-    def apply_answer_concept_updates(self) -> dict[str, Any]:
-        return apply_answer_concept_updates(self.config)
+    def apply_answer_concept_updates(self, draft_result: dict[str, Any] | None = None) -> dict[str, Any]:
+        return apply_answer_concept_updates(self.config, draft_result=draft_result)
 
     def draft_source_summary_with_agent(self, source_text: str) -> dict[str, Any]:
         return hook_draft_source_summary_with_agent(source_text).as_dict()

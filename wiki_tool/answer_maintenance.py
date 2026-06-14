@@ -53,8 +53,11 @@ def draft_answer_concept_updates(config: DomainConfig) -> dict[str, Any]:
     }
 
 
-def apply_answer_concept_updates(config: DomainConfig) -> dict[str, Any]:
-    result = draft_answer_concept_updates(config)
+def apply_answer_concept_updates(
+    config: DomainConfig,
+    draft_result: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    result = draft_result if draft_result is not None else draft_answer_concept_updates(config)
     applied: list[dict[str, Any]] = []
     skipped: list[dict[str, Any]] = []
 

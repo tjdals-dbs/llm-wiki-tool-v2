@@ -59,6 +59,8 @@ class FakeAdapter:
         self.fail_save = False
         self.answer_payload = None
         self.save_result = None
+        self.answer_draft_result = {"draft_count": 1, "skipped_count": 1, "drafts": [], "skipped": []}
+        self.applied_answer_draft_result = None
 
     def scan_raw_sources(self):
         self.calls.append("scan")
@@ -99,10 +101,11 @@ class FakeAdapter:
 
     def draft_answer_concept_updates(self):
         self.calls.append("answer_drafts")
-        return {"draft_count": 1, "skipped_count": 1, "drafts": [], "skipped": []}
+        return self.answer_draft_result
 
-    def apply_answer_concept_updates(self):
+    def apply_answer_concept_updates(self, draft_result=None):
         self.calls.append("answer_updates")
+        self.applied_answer_draft_result = draft_result
         return {
             "applied_count": 1,
             "skipped_count": 1,
@@ -978,6 +981,7 @@ class DesktopGuiTests(unittest.TestCase):
             adapter.calls,
             ["scan", "summarize", "organize", "answers", "answer_drafts", "answer_updates", "graph", "lint"],
         )
+        self.assertIs(adapter.applied_answer_draft_result, adapter.answer_draft_result)
 
     def test_maintenance_report_marks_success_when_every_stage_passes(self):
         adapter = FakeAdapter()

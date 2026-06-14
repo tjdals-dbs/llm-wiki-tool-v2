@@ -226,7 +226,7 @@ class DesktopGuiPresenter:
         organize = self.adapter.organize_pending_sources()
         answers = self.adapter.analyze_answer_candidates()
         answer_concept_drafts = self.adapter.draft_answer_concept_updates()
-        answer_concept_updates = self.adapter.apply_answer_concept_updates()
+        answer_concept_updates = self.adapter.apply_answer_concept_updates(draft_result=answer_concept_drafts)
         graph = self.adapter.get_wiki_graph()
         lint = self.adapter.run_wiki_lint()
         raw_after = _raw_snapshot(self.adapter)
