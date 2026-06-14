@@ -26,6 +26,7 @@ from wiki_tool.desktop_gui import (
     build_maintenance_pending_message,
     create_gui_user_domain,
     domain_controls_enabled,
+    format_maintenance_report,
     agent_provider_detail_toggle_label,
     advanced_maintenance_default_visible,
     advanced_maintenance_toggle_label,
@@ -98,6 +99,12 @@ class FakeAdapter:
             "codex_used_count": 1,
             "fallback_count": 0,
             "navigation_refreshed": True,
+            "generated_pages": [
+                "wiki/sources/chapter-10.md",
+                "wiki/sources/chapter-11.md",
+                "wiki/sources/chapter-12.md",
+                "wiki/sources/chapter-13.md",
+            ],
         }
 
     def organize_pending_sources(self):
@@ -111,6 +118,12 @@ class FakeAdapter:
             "codex_used_count": 1,
             "fallback_count": 1,
             "navigation_refreshed": True,
+            "changed_pages": [
+                "wiki/concepts/risk.md",
+                "wiki/concepts/return.md",
+                "wiki/concepts/beta.md",
+                "wiki/concepts/capm.md",
+            ],
         }
 
     def run_wiki_lint(self):
@@ -981,15 +994,20 @@ class DesktopGuiTests(unittest.TestCase):
         self.assertIn("Maintenance Run Report", status)
         self.assertIn("상태: fallback 포함 성공", status)
         self.assertIn("raw scan: 신규 1개, 변경 0개, 유지 0개, 제외 0개", status)
-        self.assertIn("source summary: provider codex, 요약 1개, Codex 1개, fallback 0개, 검토 필요 0개", status)
-        self.assertIn("concept organize: provider codex, 승격 1개, 병합 0개, 건너뜀 0개, Codex 1개, fallback 1개", status)
+        self.assertIn("source summary: provider codex, 생성 1개, skipped 2개, fallback 0개, 검토 필요 0개", status)
+        self.assertIn("concept organize: provider codex, promoted 1개, merged 0개, skipped 0개, fallback 1개", status)
         self.assertIn("answer candidates: 2개, skipped 1개", status)
         self.assertIn("answer concept drafts: 1개, skipped 1개", status)
         self.assertIn("answer concept updates: applied 1개, skipped 1개", status)
-        self.assertIn("applied: wiki/answers/capm.md -> wiki/concepts/capm.md", status)
+        self.assertIn("concept 반영: wiki/answers/capm.md -> wiki/concepts/capm.md", status)
         self.assertIn("skipped reasons: source evidence required 1개", status)
+        self.assertIn("source 생성: wiki/sources/chapter-10.md, wiki/sources/chapter-11.md, wiki/sources/chapter-12.md 외 1개", status)
+        self.assertIn("concept 변경: wiki/concepts/risk.md, wiki/concepts/return.md, wiki/concepts/beta.md 외 1개", status)
+        self.assertNotIn("wiki/sources/chapter-13.md", status)
+        concept_change_line = next(line for line in status.splitlines() if line.startswith("concept 변경:"))
+        self.assertNotIn("wiki/concepts/capm.md", concept_change_line)
         self.assertIn("lint: 통과, issue 0개", status)
-        self.assertIn("navigation: 갱신", status)
+        self.assertIn("refresh: graph 갱신, navigation 갱신", status)
         self.assertIn("안전성: raw 불변성 확인 불가, lint 통과, fallback 발생", status)
         self.assertIn("산출물: source 1개, concept 변경 1개, graph node 2개, edge 0개", status)
         self.assertIn("원인:", status)
@@ -1022,10 +1040,75 @@ class DesktopGuiTests(unittest.TestCase):
 
         self.assertIn("상태: 성공", status)
         self.assertIn("raw scan: 신규 1개, 변경 0개, 유지 8개, 제외 0개", status)
-        self.assertIn("concept organize: provider codex, 승격 4개, 병합 2개", status)
+        self.assertIn("concept organize: provider codex, promoted 4개, merged 2개", status)
         self.assertIn("fallback 없음", status)
         self.assertNotIn("{", status)
         self.assertNotIn("}", status)
+
+    def test_maintenance_report_summarizes_changed_items_with_limit(self):
+        report = format_maintenance_report(
+            {
+                "scanned_count": 4,
+                "new_count": 2,
+                "changed_count": 1,
+                "ignored_count": 1,
+            },
+            {
+                "provider": "rule_based",
+                "summarized_count": 4,
+                "skipped_count": 1,
+                "fallback_count": 0,
+                "needs_review_count": 0,
+                "navigation_refreshed": True,
+                "generated_pages": [
+                    "wiki/sources/a.md",
+                    "wiki/sources/b.md",
+                    "wiki/sources/c.md",
+                    "wiki/sources/d.md",
+                ],
+            },
+            {
+                "provider": "rule_based",
+                "promoted_count": 1,
+                "merged_count": 2,
+                "skipped_count": 3,
+                "fallback_count": 0,
+                "navigation_refreshed": True,
+                "changed_pages": [
+                    "wiki/concepts/alpha.md",
+                    "wiki/concepts/beta.md",
+                    "wiki/concepts/gamma.md",
+                    "wiki/concepts/delta.md",
+                ],
+            },
+            {"ok": True, "issues": []},
+            {"nodes": [], "edges": []},
+            answer_concept_updates={
+                "applied_count": 4,
+                "skipped_count": 3,
+                "applied_examples": [
+                    "wiki/answers/a.md -> wiki/concepts/a.md",
+                    "wiki/answers/b.md -> wiki/concepts/b.md",
+                    "wiki/answers/c.md -> wiki/concepts/c.md",
+                    "wiki/answers/d.md -> wiki/concepts/d.md",
+                ],
+                "skipped_reason_summary": [
+                    {"reason": "source evidence required", "count": 2},
+                    {"reason": "already applied", "count": 1},
+                ],
+                "navigation_refreshed": True,
+                "graph_refreshed": True,
+            },
+        )
+
+        self.assertIn("raw scan: 신규 2개, 변경 1개, 유지 0개, 제외 1개", report)
+        self.assertIn("source summary: provider rule_based, 생성 4개, skipped 1개, fallback 0개, 검토 필요 0개", report)
+        self.assertIn("concept organize: provider rule_based, promoted 1개, merged 2개, skipped 3개, fallback 0개", report)
+        self.assertIn("source 생성: wiki/sources/a.md, wiki/sources/b.md, wiki/sources/c.md 외 1개", report)
+        self.assertIn("concept 변경: wiki/concepts/alpha.md, wiki/concepts/beta.md, wiki/concepts/gamma.md 외 1개", report)
+        self.assertIn("concept 반영: wiki/answers/a.md -> wiki/concepts/a.md, wiki/answers/b.md -> wiki/concepts/b.md, wiki/answers/c.md -> wiki/concepts/c.md 외 1개", report)
+        self.assertIn("skipped reasons: source evidence required 2개, already applied 1개", report)
+        self.assertIn("refresh: graph 갱신, navigation 갱신", report)
 
     def test_maintenance_report_marks_lint_failure_with_short_issues(self):
         adapter = FakeAdapter()

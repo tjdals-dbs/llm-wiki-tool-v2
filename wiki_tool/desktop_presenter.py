@@ -388,13 +388,18 @@ def format_maintenance_report(
     new_count = int(scan.get("new_count", 0) or 0)
     changed_count = int(scan.get("changed_count", 0) or 0)
     ignored_count = int(scan.get("ignored_count", 0) or 0)
-    unchanged_count = max(scanned_count - new_count - changed_count, 0)
+    unchanged_count = max(scanned_count - new_count - changed_count - ignored_count, 0)
     lint_status = "통과" if lint_ok else "실패"
     fallback_status = "fallback 발생" if fallback_count else "fallback 없음"
     navigation_refreshed = bool(
         summarize.get("navigation_refreshed")
         or organize.get("navigation_refreshed")
         or (answer_concept_updates or {}).get("navigation_refreshed")
+    )
+    graph_refreshed = bool(
+        organize.get("graph_refreshed")
+        or organize.get("navigation_refreshed")
+        or (answer_concept_updates or {}).get("graph_refreshed")
     )
     answer_candidate_count = int((answers or {}).get("candidate_count", 0) or 0)
     answer_skipped_count = int((answers or {}).get("skipped_count", 0) or 0)
@@ -403,6 +408,7 @@ def format_maintenance_report(
     answer_update_count = int((answer_concept_updates or {}).get("applied_count", 0) or 0)
     answer_update_skipped_count = int((answer_concept_updates or {}).get("skipped_count", 0) or 0)
     navigation_status = "갱신" if navigation_refreshed else "실행 안 함"
+    graph_status = "갱신" if graph_refreshed else "실행 안 함"
 
     lines = [
         "Maintenance Run Report",
@@ -412,26 +418,36 @@ def format_maintenance_report(
         (
             "source summary: "
             f"provider {summarize.get('provider', 'rule_based')}, "
-            f"요약 {summarize.get('summarized_count', 0)}개, "
-            f"Codex {summarize.get('codex_used_count', 0)}개, "
+            f"생성 {summarize.get('summarized_count', 0)}개, "
+            f"skipped {summarize.get('skipped_count', 0)}개, "
             f"fallback {source_fallback}개, "
             f"검토 필요 {summarize.get('needs_review_count', 0)}개"
         ),
         (
             "concept organize: "
             f"provider {organize.get('provider', 'rule_based')}, "
-            f"승격 {organize.get('promoted_count', 0)}개, "
-            f"병합 {organize.get('merged_count', 0)}개, "
-            f"건너뜀 {organize.get('skipped_count', 0)}개, "
-            f"Codex {organize.get('codex_used_count', 0)}개, "
+            f"promoted {organize.get('promoted_count', 0)}개, "
+            f"merged {organize.get('merged_count', 0)}개, "
+            f"skipped {organize.get('skipped_count', 0)}개, "
             f"fallback {concept_fallback}개"
         ),
+        *_format_limited_items("source 생성", summarize.get("generated_pages") or summarize.get("source_pages") or []),
+        *_format_reason_summary("source skipped reasons", summarize.get("skipped_reason_summary") or []),
+        *_format_limited_items(
+            "concept 변경",
+            organize.get("changed_pages")
+            or organize.get("merged_pages")
+            or organize.get("promoted_pages")
+            or organize.get("concept_pages")
+            or [],
+        ),
+        *_format_reason_summary("concept skipped reasons", organize.get("skipped_reason_summary") or []),
         f"lint: {lint_status}, issue {len(lint_issues)}개",
         f"answer candidates: {answer_candidate_count}개, skipped {answer_skipped_count}개",
         f"answer concept drafts: {answer_draft_count}개, skipped {answer_draft_skipped_count}개",
         f"answer concept updates: applied {answer_update_count}개, skipped {answer_update_skipped_count}개",
         *_format_answer_concept_update_details(answer_concept_updates),
-        f"navigation: {navigation_status}",
+        f"refresh: graph {graph_status}, navigation {navigation_status}",
         f"안전성: {raw_integrity}, lint {lint_status}, {fallback_status}",
         (
             "산출물: "
@@ -458,18 +474,30 @@ def _format_answer_concept_update_details(answer_concept_updates: dict[str, Any]
     if not answer_concept_updates:
         return []
     lines: list[str] = []
-    for example in (answer_concept_updates.get("applied_examples") or [])[:3]:
-        if example:
-            lines.append(f"applied: {example}")
+    lines.extend(_format_limited_items("concept 반영", answer_concept_updates.get("applied_examples") or []))
+    lines.extend(_format_reason_summary("skipped reasons", answer_concept_updates.get("skipped_reason_summary") or []))
+    return lines
+
+
+def _format_limited_items(label: str, items: list[Any], *, limit: int = 3) -> list[str]:
+    values = [str(item).strip() for item in items if str(item).strip()]
+    if not values:
+        return []
+    visible = values[:limit]
+    suffix = f" 외 {len(values) - limit}개" if len(values) > limit else ""
+    return [f"{label}: {', '.join(visible)}{suffix}"]
+
+
+def _format_reason_summary(label: str, summary: list[dict[str, Any]], *, limit: int = 3) -> list[str]:
     reasons = []
-    for item in (answer_concept_updates.get("skipped_reason_summary") or [])[:3]:
+    for item in summary[:limit]:
         reason = str(item.get("reason") or "").strip()
         count = int(item.get("count", 0) or 0)
         if reason and count:
             reasons.append(f"{reason} {count}개")
     if reasons:
-        lines.append("skipped reasons: " + ", ".join(reasons))
-    return lines
+        return [f"{label}: " + ", ".join(reasons)]
+    return []
 
 
 def _maintenance_fallback_reasons(source_fallback: int, concept_fallback: int) -> list[str]:
