@@ -97,6 +97,8 @@ def apply_answer_concept_updates(
         "skipped_count": len(skipped),
         "applied": applied,
         "skipped": skipped,
+        "applied_examples": _applied_examples(applied),
+        "skipped_reason_summary": _skipped_reason_summary(skipped),
         "navigation_refreshed": navigation_refreshed,
         "graph_refreshed": graph_refreshed,
     }
@@ -237,6 +239,13 @@ def _append_answer_concept_update_log(
     path = config.wiki_dir / "log.md"
     existing = path.read_text(encoding="utf-8") if path.exists() else "# Wiki Log\n\n"
     lines: list[str] = []
+    lines.append(f"- answer concept update summary: applied={len(applied)}, skipped={len(skipped)}")
+    reason_summary = _skipped_reason_summary(skipped)
+    if reason_summary:
+        lines.append(
+            "- answer concept update skipped reasons: "
+            + ", ".join(f"{item['reason']} {item['count']}" for item in reason_summary)
+        )
     for item in applied:
         lines.append(
             f"- answer concept update applied: {item.get('answer_path', '')} -> {item.get('target_concept_path', '')}"
@@ -248,6 +257,44 @@ def _append_answer_concept_update_log(
     if not lines:
         return
     path.write_text(existing.rstrip() + "\n\n" + "\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _applied_examples(applied: list[dict[str, Any]], *, limit: int = 3) -> list[str]:
+    examples: list[str] = []
+    for item in applied[:limit]:
+        answer_path = str(item.get("answer_path") or "")
+        concept_path = str(item.get("target_concept_path") or "")
+        if answer_path and concept_path:
+            examples.append(f"{answer_path} -> {concept_path}")
+    return examples
+
+
+def _skipped_reason_summary(skipped: list[dict[str, Any]], *, limit: int = 3) -> list[dict[str, Any]]:
+    counts: dict[str, int] = {}
+    order: list[str] = []
+    for item in skipped:
+        reason = _short_skip_reason(str(item.get("reason") or "unknown"))
+        if reason not in counts:
+            order.append(reason)
+            counts[reason] = 0
+        counts[reason] += 1
+    return [{"reason": reason, "count": counts[reason]} for reason in order[:limit]]
+
+
+def _short_skip_reason(reason: str) -> str:
+    normalized = _single_line(reason).rstrip(".")
+    mappings = [
+        ("source evidence is required", "source evidence required"),
+        ("already applied", "already applied"),
+        ("new concept candidates require review", "new concept candidate"),
+        ("target concept page was not found", "target concept missing"),
+        ("draft summary is empty", "empty draft summary"),
+    ]
+    lowered = normalized.casefold()
+    for needle, label in mappings:
+        if needle in lowered:
+            return label
+    return normalized or "unknown"
 
 
 def _scan_answer_pages(config: DomainConfig) -> list[dict[str, Any]]:

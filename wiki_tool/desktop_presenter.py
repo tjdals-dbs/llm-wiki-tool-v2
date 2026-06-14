@@ -430,6 +430,7 @@ def format_maintenance_report(
         f"answer candidates: {answer_candidate_count}개, skipped {answer_skipped_count}개",
         f"answer concept drafts: {answer_draft_count}개, skipped {answer_draft_skipped_count}개",
         f"answer concept updates: applied {answer_update_count}개, skipped {answer_update_skipped_count}개",
+        *_format_answer_concept_update_details(answer_concept_updates),
         f"navigation: {navigation_status}",
         f"안전성: {raw_integrity}, lint {lint_status}, {fallback_status}",
         (
@@ -451,6 +452,24 @@ def format_maintenance_report(
         lines.extend(["", "문제:", *(_format_lint_issue(issue) for issue in lint_issues[:5])])
 
     return "\n".join(lines)
+
+
+def _format_answer_concept_update_details(answer_concept_updates: dict[str, Any] | None) -> list[str]:
+    if not answer_concept_updates:
+        return []
+    lines: list[str] = []
+    for example in (answer_concept_updates.get("applied_examples") or [])[:3]:
+        if example:
+            lines.append(f"applied: {example}")
+    reasons = []
+    for item in (answer_concept_updates.get("skipped_reason_summary") or [])[:3]:
+        reason = str(item.get("reason") or "").strip()
+        count = int(item.get("count", 0) or 0)
+        if reason and count:
+            reasons.append(f"{reason} {count}개")
+    if reasons:
+        lines.append("skipped reasons: " + ", ".join(reasons))
+    return lines
 
 
 def _maintenance_fallback_reasons(source_fallback: int, concept_fallback: int) -> list[str]:

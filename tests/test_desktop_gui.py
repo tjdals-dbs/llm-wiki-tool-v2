@@ -61,6 +61,28 @@ class FakeAdapter:
         self.save_result = None
         self.answer_draft_result = {"draft_count": 1, "skipped_count": 1, "drafts": [], "skipped": []}
         self.applied_answer_draft_result = None
+        self.answer_update_result = {
+            "applied_count": 1,
+            "skipped_count": 1,
+            "applied": [
+                {
+                    "answer_path": "wiki/answers/capm.md",
+                    "target_concept_path": "wiki/concepts/capm.md",
+                    "reason": "answer-derived note appended to concept page.",
+                }
+            ],
+            "skipped": [
+                {
+                    "answer_path": "wiki/answers/beta.md",
+                    "target_concept_path": "wiki/concepts/beta.md",
+                    "reason": "source evidence is required before concept update.",
+                }
+            ],
+            "applied_examples": ["wiki/answers/capm.md -> wiki/concepts/capm.md"],
+            "skipped_reason_summary": [{"reason": "source evidence required", "count": 1}],
+            "navigation_refreshed": True,
+            "graph_refreshed": True,
+        }
 
     def scan_raw_sources(self):
         self.calls.append("scan")
@@ -106,14 +128,7 @@ class FakeAdapter:
     def apply_answer_concept_updates(self, draft_result=None):
         self.calls.append("answer_updates")
         self.applied_answer_draft_result = draft_result
-        return {
-            "applied_count": 1,
-            "skipped_count": 1,
-            "applied": [],
-            "skipped": [],
-            "navigation_refreshed": True,
-            "graph_refreshed": True,
-        }
+        return self.answer_update_result
 
     def answer_question(self, query):
         self.calls.append(("answer", query))
@@ -971,6 +986,8 @@ class DesktopGuiTests(unittest.TestCase):
         self.assertIn("answer candidates: 2개, skipped 1개", status)
         self.assertIn("answer concept drafts: 1개, skipped 1개", status)
         self.assertIn("answer concept updates: applied 1개, skipped 1개", status)
+        self.assertIn("applied: wiki/answers/capm.md -> wiki/concepts/capm.md", status)
+        self.assertIn("skipped reasons: source evidence required 1개", status)
         self.assertIn("lint: 통과, issue 0개", status)
         self.assertIn("navigation: 갱신", status)
         self.assertIn("안전성: raw 불변성 확인 불가, lint 통과, fallback 발생", status)

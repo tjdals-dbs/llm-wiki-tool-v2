@@ -417,6 +417,46 @@ class AnswerMaintenanceTests(unittest.TestCase):
             self.assertFalse(result["graph_refreshed"])
             self.assertIn("source evidence", (root / "wiki" / "log.md").read_text(encoding="utf-8"))
 
+    def test_apply_answer_concept_update_reports_examples_and_skip_reason_summary(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            domain = load_domain_config(write_domain(root), root=root)
+            adapter = WikiToolAdapter(domain)
+            concept = root / "wiki" / "concepts" / "jwt.md"
+            concept.parent.mkdir(parents=True)
+            concept.write_text("# JWT\n\n## Definition\n\nHuman-authored definition.\n", encoding="utf-8")
+            (root / "wiki" / "sources").mkdir(parents=True)
+            (root / "wiki" / "sources" / "jwt.md").write_text("# JWT Source\n", encoding="utf-8")
+            adapter.apply_wiki_update(
+                question="What is JWT?",
+                answer="JWT is a compact token format.",
+                used_pages=[{"path": "wiki/concepts/jwt.md"}],
+                related_pages=[],
+                evidence=[{"path": "wiki/sources/jwt.md", "text": "JWT source evidence"}],
+                status="ok",
+                suggested_title="JWT",
+            )
+            draft_result = draft_answer_concept_updates(domain)
+            draft_result["skipped"].append(
+                {
+                    "draft_action": "skip",
+                    "answer_path": "wiki/answers/no-source.md",
+                    "target_concept_path": "wiki/concepts/no-source.md",
+                    "reason": "source evidence is required before concept update.",
+                }
+            )
+            draft_result["skipped_count"] += 1
+
+            result = apply_answer_concept_updates(domain, draft_result=draft_result)
+            log = (root / "wiki" / "log.md").read_text(encoding="utf-8")
+
+            self.assertEqual(result["applied_examples"], ["wiki/answers/jwt.md -> wiki/concepts/jwt.md"])
+            self.assertIn({"reason": "source evidence required", "count": 1}, result["skipped_reason_summary"])
+            self.assertIn("answer concept update summary: applied=1, skipped=1", log)
+            self.assertIn("answer concept update skipped reasons: source evidence required 1", log)
+            self.assertIn("answer concept update applied: wiki/answers/jwt.md -> wiki/concepts/jwt.md", log)
+            self.assertIn("answer concept update skipped: wiki/answers/no-source.md", log)
+
     def test_apply_answer_concept_update_is_idempotent(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
