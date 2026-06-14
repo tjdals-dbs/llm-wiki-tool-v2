@@ -3,6 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from wiki_tool.desktop_gui import (
     GUI_ACTION_LABELS,
@@ -743,6 +744,50 @@ class DesktopGuiTests(unittest.TestCase):
         self.assertEqual(result.fallback_reason, "MCP route 실행 실패로 direct adapter fallback 사용")
         self.assertIn(("answer", "CAPM"), adapter.calls)
 
+    def test_mcp_route_labels_gemini_answer_provider(self):
+        def registry(_config):
+            return {
+                "answer_question": lambda _query: {
+                    "status": "ok",
+                    "answer": "Gemini route answer",
+                    "provider": "gemini",
+                    "fallback": False,
+                    "used_pages": [],
+                    "related_pages": [],
+                    "evidence": [],
+                }
+            }
+
+        with patch.dict("os.environ", {"LLM_WIKI_AGENT_PROVIDER": "gemini"}, clear=True):
+            result = McpCodexAgentRoute(object(), registry_factory=registry).ask("CAPM")
+
+        self.assertEqual(result.route, "mcp/gemini")
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(result.answer, "Gemini route answer")
+
+    def test_mcp_route_labels_gemini_fallback_status(self):
+        def registry(_config):
+            return {
+                "answer_question": lambda _query: {
+                    "status": "ok",
+                    "answer": "rule-based fallback answer",
+                    "provider": "rule_based",
+                    "fallback": True,
+                    "fallback_reason": "Gemini timeout",
+                    "gemini_status": "gemini_timeout",
+                    "used_pages": [],
+                    "related_pages": [],
+                    "evidence": [],
+                }
+            }
+
+        with patch.dict("os.environ", {"LLM_WIKI_AGENT_PROVIDER": "gemini"}, clear=True):
+            result = McpCodexAgentRoute(object(), registry_factory=registry).ask("CAPM")
+
+        self.assertEqual(result.route, "mcp/gemini fallback")
+        self.assertEqual(result.status, "gemini_timeout")
+        self.assertEqual(result.fallback_reason, "Gemini timeout")
+
     def test_agent_route_line_extracts_status_for_gui_label(self):
         self.assertEqual(_agent_route_line("answer\nagent route: mcp/codex\nstatus: ok"), "agent route: mcp/codex")
         self.assertEqual(_agent_route_line("answer only"), "agent route: 알 수 없음")
@@ -767,7 +812,7 @@ class DesktopGuiTests(unittest.TestCase):
         self.assertIn("concept: codex / gpt-5.5", status.detail_lines)
         self.assertIn("review: codex / gpt-5.5", status.detail_lines)
 
-    def test_agent_provider_status_marks_unsupported_gemini_roles_as_fallback(self):
+    def test_agent_provider_status_marks_gemini_answer_only_as_supported(self):
         env = {
             "LLM_WIKI_AGENT_PROVIDER": "gemini",
             "LLM_WIKI_AGENT_MODEL": "gemini-pro",
@@ -775,8 +820,8 @@ class DesktopGuiTests(unittest.TestCase):
 
         status = build_agent_provider_panel_status(env=env)
 
-        self.assertEqual(status.summary, "agent: rule_based fallback")
-        self.assertIn("answer: rule_based fallback", status.detail_lines)
+        self.assertEqual(status.summary, "agent: gemini / gemini-pro")
+        self.assertIn("answer: gemini / gemini-pro", status.detail_lines)
         self.assertIn("ingest: rule_based fallback", status.detail_lines)
         self.assertIn("concept: rule_based fallback", status.detail_lines)
         self.assertIn("review: rule_based fallback", status.detail_lines)

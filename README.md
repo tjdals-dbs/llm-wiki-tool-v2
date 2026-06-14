@@ -136,7 +136,7 @@ GUI는 browser UI가 아니라 PySide6 기반 3분할 데스크톱 앱입니다.
 - 중앙: 선택한 Markdown wiki page 본문과 관계 그래프
 - 오른쪽: Wiki Agent chat, provider/model 상태, 위키 업데이트 버튼, 고급 maintenance controls
 
-오른쪽 Wiki Agent는 MCP tool registry를 우선 route로 사용합니다. GUI에는 `agent route: mcp/codex`, `agent route: mcp/rule_based`, `agent route: direct fallback`처럼 현재 답변 경로가 표시됩니다. agent 질문과 maintenance 계열 작업은 background worker에서 실행되어 긴 작업 중에도 창이 멈추지 않도록 구성되어 있습니다.
+오른쪽 Wiki Agent는 MCP tool registry를 우선 route로 사용합니다. GUI에는 `agent route: mcp/codex`, `agent route: mcp/gemini`, `agent route: mcp/rule_based`, `agent route: direct fallback`처럼 현재 답변 경로가 표시됩니다. agent 질문과 maintenance 계열 작업은 background worker에서 실행되어 긴 작업 중에도 창이 멈추지 않도록 구성되어 있습니다.
 
 일반 사용자는 `위키 업데이트` 버튼 하나로 raw scan, source summary, concept organize, answer-derived concept update, graph/navigation refresh, lint를 실행할 수 있습니다. 세부 작업 버튼은 `고급 관리` 영역에 접어 둡니다.
 
@@ -168,7 +168,7 @@ GUI는 browser UI가 아니라 PySide6 기반 3분할 데스크톱 앱입니다.
 현재 우선 지원 provider는 Codex CLI입니다. OpenAI API key 입력 UI를 만들지 않고, 사용자가 이미 로그인해 둔 로컬 Codex CLI 세션을 subprocess로 호출합니다.
 
 - `codex`: answer, ingest, concept, review role에 연결되어 있습니다.
-- `gemini`: CLI detection/wrapper skeleton만 준비되어 있습니다. 아직 answer/ingest/concept/review role에 실제로 연결하지 않았습니다.
+- `gemini`: answer role에 연결되어 있습니다. ingest, concept, review role은 아직 연결하지 않았고 `rule_based` fallback을 사용합니다.
 - `rule_based`: 항상 사용 가능한 deterministic fallback입니다.
 - `claude`: 현재 provider 목록에서 제외되어 있습니다.
 
@@ -187,12 +187,12 @@ LLM_WIKI_GEMINI_COMMAND=gemini
 
 주요 환경 변수:
 
-- `LLM_WIKI_AGENT_PROVIDER`: 전역 provider입니다. 예: `codex`, `rule_based`
+- `LLM_WIKI_AGENT_PROVIDER`: 전역 provider입니다. 예: `codex`, `gemini`, `rule_based`
 - `LLM_WIKI_ANSWER_PROVIDER`, `LLM_WIKI_INGEST_PROVIDER`, `LLM_WIKI_CONCEPT_PROVIDER`, `LLM_WIKI_REVIEW_PROVIDER`: role별 provider override입니다.
 - `LLM_WIKI_AGENT_MODEL`: role별 model이 없을 때 쓰는 기본 model입니다.
 - `LLM_WIKI_ANSWER_MODEL`, `LLM_WIKI_INGEST_MODEL`, `LLM_WIKI_CONCEPT_MODEL`, `LLM_WIKI_REVIEW_MODEL`: role별 model입니다.
 - `LLM_WIKI_CODEX_COMMAND`: Codex CLI command입니다. 기본값은 `codex.cmd`입니다.
-- `LLM_WIKI_GEMINI_COMMAND`: Gemini CLI skeleton 감지/호출용 command입니다. 기본값은 `gemini`입니다.
+- `LLM_WIKI_GEMINI_COMMAND`: Gemini CLI 감지 및 answer 호출용 command입니다. 기본값은 `gemini`입니다.
 
 이미 OS 환경 변수에 값이 있으면 `.env` 값은 덮어쓰지 않습니다.
 
@@ -242,4 +242,4 @@ python scripts\smoke_codex_provider.py --domain examples\finance\domain.yml --qu
 - vision 기반 PDF/image 분석은 현재 core pipeline이 아니라 확장 경로입니다.
 - 완전한 background job system은 아닙니다. `scripts\run_agent_runtime.py`는 반복 실행을 제공하지만, 별도 queue/retry dashboard는 없습니다.
 - 검색은 로컬 Markdown 검색과 graph context 중심입니다. 별도 vector database는 포함하지 않습니다.
-- Gemini provider는 skeleton 단계이며 실제 role 연결은 이후 작업입니다.
+- Gemini provider는 answer role만 연결되어 있습니다. ingest, concept, review role 연결은 이후 확장 경로입니다.

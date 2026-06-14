@@ -19,7 +19,7 @@ AGENT_PROVIDER_ROLES = ("answer", "ingest", "concept", "review")
 AGENT_PROVIDER_DETAIL_DEFAULT_VISIBLE = False
 AGENT_PROVIDER_SUPPORTED_ROLES = {
     PROVIDER_CODEX: frozenset(AGENT_PROVIDER_ROLES),
-    PROVIDER_GEMINI: frozenset(),
+    PROVIDER_GEMINI: frozenset({"answer"}),
     PROVIDER_RULE_BASED: frozenset(AGENT_PROVIDER_ROLES),
 }
 
@@ -133,6 +133,8 @@ class McpCodexAgentRoute:
         provider = load_agent_provider_config("answer").provider
         if provider == PROVIDER_CODEX:
             route = "mcp/codex"
+        elif provider == PROVIDER_GEMINI:
+            route = "mcp/gemini"
         elif provider == PROVIDER_RULE_BASED:
             route = "mcp/rule_based"
         else:
@@ -142,9 +144,9 @@ class McpCodexAgentRoute:
             answer_tool = registry["answer_question"]
             answer = answer_tool(query)
             result = _route_result_from_answer(answer, route=route, question=query)
-            if result.route == route and answer.get("fallback") and provider == PROVIDER_CODEX:
+            if result.route == route and answer.get("fallback") and provider in {PROVIDER_CODEX, PROVIDER_GEMINI}:
                 return AgentRouteResult(
-                    route="mcp/codex fallback",
+                    route=f"mcp/{provider} fallback",
                     status=result.status,
                     answer=result.answer,
                     used_pages=result.used_pages,
@@ -329,6 +331,8 @@ def _route_result_from_answer(answer: dict[str, Any], *, route: str, question: s
     status = str(answer.get("status") or ("fallback" if fallback else "ok"))
     if fallback and answer.get("codex_status"):
         status = str(answer["codex_status"])
+    if fallback and answer.get("gemini_status"):
+        status = str(answer["gemini_status"])
     return AgentRouteResult(
         route=route,
         status=status,

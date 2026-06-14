@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 from wiki_tool.config import load_domain_config
 from wiki_tool.codex_agent import CodexAgentResult
+from wiki_tool.gemini_agent import GeminiAgentResult
 from wiki_tool.mcp_server import create_fastmcp_server, register_mcp_tools
 from wiki_tool.mcp_tools import WikiToolAdapter
 from wiki_tool.scanner import scan_raw_sources
@@ -168,20 +169,90 @@ class AnswerAndMcpServerTests(unittest.TestCase):
             self.assertEqual(answer["codex_status"], "codex_invalid_answer")
             self.assertIn("missing_evidence", answer["fallback_reason"])
 
-    def test_answer_question_falls_back_safely_for_unsupported_provider(self):
+    def test_answer_question_uses_gemini_provider_when_enabled(self):
         with tempfile.TemporaryDirectory() as tmp:
             adapter = build_adapter(Path(tmp))
+            gemini_result = GeminiAgentResult(
+                ok=True,
+                status="ok",
+                answer="Gemini가 wiki evidence를 기준으로 답했습니다.",
+                used_pages=[],
+                related_pages=[],
+                evidence=[],
+            )
 
-            with patch.dict("os.environ", {"LLM_WIKI_AGENT_PROVIDER": "gemini"}, clear=True), patch(
+            with patch.dict(
+                "os.environ",
+                {"LLM_WIKI_AGENT_PROVIDER": "gemini", "LLM_WIKI_ANSWER_MODEL": "gemini-model"},
+                clear=True,
+            ), patch("wiki_tool.mcp_tools.GeminiAgentBridge") as bridge_cls, patch(
                 "wiki_tool.mcp_tools.CodexAgentBridge"
-            ) as bridge_cls:
+            ) as codex_bridge_cls:
+                bridge_cls.return_value.run_prompt.return_value = gemini_result
                 answer = adapter.answer_question("CAPM은 무엇인가?")
 
-            bridge_cls.assert_not_called()
+            codex_bridge_cls.assert_not_called()
+            self.assertEqual(answer["provider"], "gemini")
+            self.assertFalse(answer["fallback"])
+            self.assertIn("Gemini가", answer["answer"])
+            self.assertTrue(answer["used_pages"])
+            self.assertTrue(answer["evidence"])
+            prompt = bridge_cls.return_value.run_prompt.call_args.args[0]
+            self.assertIn("CAPM은 무엇인가?", prompt)
+            self.assertIn("Evidence", prompt)
+
+    def test_answer_question_uses_answer_role_gemini_override_before_global_provider(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            adapter = build_adapter(Path(tmp))
+            gemini_result = GeminiAgentResult(
+                ok=True,
+                status="ok",
+                answer="Gemini answer role override.",
+                used_pages=[],
+                related_pages=[],
+                evidence=[],
+            )
+
+            with patch.dict(
+                "os.environ",
+                {
+                    "LLM_WIKI_AGENT_PROVIDER": "codex",
+                    "LLM_WIKI_ANSWER_PROVIDER": "gemini",
+                },
+                clear=True,
+            ), patch("wiki_tool.mcp_tools.GeminiAgentBridge") as bridge_cls, patch(
+                "wiki_tool.mcp_tools.CodexAgentBridge"
+            ) as codex_bridge_cls:
+                bridge_cls.return_value.run_prompt.return_value = gemini_result
+                answer = adapter.answer_question("CAPM은 무엇인가?")
+
+            codex_bridge_cls.assert_not_called()
+            self.assertEqual(answer["provider"], "gemini")
+            self.assertFalse(answer["fallback"])
+
+    def test_answer_question_falls_back_when_gemini_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            adapter = build_adapter(Path(tmp))
+            gemini_result = GeminiAgentResult(
+                ok=False,
+                status="gemini_timeout",
+                answer="",
+                used_pages=[],
+                related_pages=[],
+                evidence=[],
+                error="Gemini timeout",
+            )
+
+            with patch.dict("os.environ", {"LLM_WIKI_AGENT_PROVIDER": "gemini"}, clear=True), patch(
+                "wiki_tool.mcp_tools.GeminiAgentBridge"
+            ) as bridge_cls:
+                bridge_cls.return_value.run_prompt.return_value = gemini_result
+                answer = adapter.answer_question("CAPM은 무엇인가?")
+
             self.assertEqual(answer["provider"], "rule_based")
             self.assertTrue(answer["fallback"])
-            self.assertEqual(answer["codex_status"], "unsupported_provider_fallback")
-            self.assertIn("gemini", answer["fallback_reason"])
+            self.assertEqual(answer["gemini_status"], "gemini_timeout")
+            self.assertIn("Gemini timeout", answer["fallback_reason"])
             self.assertEqual(answer["save_decision"]["save_action"], "skip")
             self.assertFalse(answer["save_decision"]["save_eligible"])
 

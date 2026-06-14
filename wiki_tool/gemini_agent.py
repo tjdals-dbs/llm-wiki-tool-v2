@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import shlex
 import subprocess
 from dataclasses import dataclass
@@ -73,18 +74,10 @@ class GeminiAgentBridge:
             message = stderr.strip() or stdout.strip() or f"exit code {completed.returncode}"
             return _failure("gemini_error", f"Gemini CLI 실행 실패: {message}", None, raw_text=stdout)
 
-        answer = stdout.strip()
-        if not answer:
+        raw = stdout.strip()
+        if not raw:
             return _failure("gemini_empty_output", "Gemini CLI가 빈 응답을 반환했습니다.", None, raw_text=stdout)
-        return GeminiAgentResult(
-            ok=True,
-            status="ok",
-            answer=answer,
-            used_pages=[],
-            related_pages=[],
-            evidence=[],
-            raw_text=stdout,
-        )
+        return parse_gemini_output(raw)
 
 
 def build_gemini_command(config: AgentProviderConfig, prompt: str) -> list[str]:
@@ -96,6 +89,57 @@ def build_gemini_command(config: AgentProviderConfig, prompt: str) -> list[str]:
         args.extend(["--model", config.model])
     args.extend(["-p", prompt])
     return args
+
+
+def parse_gemini_output(stdout: str) -> GeminiAgentResult:
+    raw = stdout.strip()
+    parsed = _extract_json_object(raw)
+    if parsed is None:
+        return GeminiAgentResult(
+            ok=True,
+            status="ok",
+            answer=raw,
+            used_pages=[],
+            related_pages=[],
+            evidence=[],
+            raw_text=raw,
+        )
+    return GeminiAgentResult(
+        ok=True,
+        status=str(parsed.get("status") or "ok"),
+        answer=str(parsed.get("answer") or ""),
+        used_pages=_list_of_dicts(parsed.get("used_pages")),
+        related_pages=_list_of_dicts(parsed.get("related_pages")),
+        evidence=_list_of_dicts(parsed.get("evidence")),
+        raw_text=raw,
+    )
+
+
+def _extract_json_object(raw: str) -> dict[str, Any] | None:
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        parsed = None
+    if isinstance(parsed, dict):
+        return parsed
+
+    decoder = json.JSONDecoder()
+    for index, char in enumerate(raw):
+        if char != "{":
+            continue
+        try:
+            parsed, _end = decoder.raw_decode(raw[index:])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+    return None
+
+
+def _list_of_dicts(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, dict)]
 
 
 def _failure(status: str, message: str, exc: BaseException | None, *, raw_text: str = "") -> GeminiAgentResult:

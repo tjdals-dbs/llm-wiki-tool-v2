@@ -17,9 +17,11 @@ from .agent_hooks import (
     draft_source_summary_with_agent as hook_draft_source_summary_with_agent,
     review_wiki_changes_with_agent as hook_review_wiki_changes_with_agent,
 )
-from .agent_provider import PROVIDER_CODEX, PROVIDER_RULE_BASED, load_agent_provider_config
+from .agent_provider import PROVIDER_CODEX, PROVIDER_GEMINI, PROVIDER_RULE_BASED, load_agent_provider_config
+from .agent_prompts import build_answer_prompt
 from .codex_agent import CodexAgentBridge
 from .config import DomainConfig
+from .gemini_agent import GeminiAgentBridge
 from .graph import build_wiki_graph, get_related_pages as graph_related_pages
 from .lint import run_wiki_lint as core_run_wiki_lint
 from .organizer import organize_pending_sources as core_organize_pending_sources
@@ -113,6 +115,22 @@ class WikiToolAdapter:
             fallback["fallback"] = True
             fallback["fallback_reason"] = codex_result.error or f"Codex answer draft invalid: {validation_error}"
             fallback["codex_status"] = codex_result.status if not validation_error else "codex_invalid_answer"
+            return _answer_with_save_decision(query, fallback)
+        if provider_config.provider == PROVIDER_GEMINI:
+            context = self.ask_wiki_context(query, limit=5)
+            evidence = self._collect_answer_evidence(query, context)
+            prompt = build_answer_prompt(query, wiki_context=context, evidence=evidence)
+            gemini_result = GeminiAgentBridge(provider_config).run_prompt(prompt)
+            payload = _gemini_payload_with_local_evidence(gemini_result.to_answer_payload(), context, evidence)
+            validation_error = _agent_answer_validation_error(payload, evidence) if gemini_result.ok else ""
+            if gemini_result.ok and not validation_error:
+                payload["fallback"] = False
+                return _answer_with_save_decision(query, payload)
+            fallback = self._answer_question_rule_based(query, context=context, evidence=evidence)
+            fallback["provider"] = "rule_based"
+            fallback["fallback"] = True
+            fallback["fallback_reason"] = gemini_result.error or f"Gemini answer draft invalid: {validation_error}"
+            fallback["gemini_status"] = gemini_result.status if not validation_error else "gemini_invalid_answer"
             return _answer_with_save_decision(query, fallback)
         if provider_config.provider != PROVIDER_RULE_BASED:
             answer = self._answer_question_rule_based(query)
@@ -421,15 +439,38 @@ def _dedupe_evidence(items: list[dict[str, str]]) -> list[dict[str, str]]:
 def _codex_answer_validation_error(result: Any, local_evidence: list[dict[str, Any]]) -> str:
     if not result.ok:
         return ""
-    if not str(result.answer or "").strip():
+    return _agent_answer_validation_error(result.to_answer_payload(), local_evidence)
+
+
+def _agent_answer_validation_error(payload: dict[str, Any], local_evidence: list[dict[str, Any]]) -> str:
+    if not str(payload.get("answer") or "").strip():
         return "missing_answer"
-    if result.status == "no_evidence":
+    status = str(payload.get("status") or "")
+    if status == "no_evidence":
         return "" if not local_evidence else "ignored_available_evidence"
-    if result.status != "ok":
-        return f"unsupported_status:{result.status}"
-    if not result.evidence and not result.used_pages:
+    if status != "ok":
+        return f"unsupported_status:{status}"
+    if not payload.get("evidence") and not payload.get("used_pages"):
         return "missing_evidence"
     return ""
+
+
+def _gemini_payload_with_local_evidence(
+    payload: dict[str, Any],
+    context: list[dict[str, Any]],
+    evidence: list[dict[str, Any]],
+) -> dict[str, Any]:
+    result = dict(payload)
+    if not result.get("evidence"):
+        result["evidence"] = evidence
+    if not result.get("used_pages"):
+        evidence_paths = {str(item.get("path") or "") for item in result.get("evidence", []) if item.get("path")}
+        result["used_pages"] = [item for item in context if item.get("path") in evidence_paths]
+    if not result.get("related_pages"):
+        used_paths = {str(item.get("path") or "") for item in result.get("used_pages", []) if item.get("path")}
+        result["related_pages"] = [item for item in context if item.get("path") not in used_paths]
+    result["provider"] = PROVIDER_GEMINI
+    return result
 
 
 def _compose_evidence_answer(query: str, evidence: list[dict[str, str]]) -> str:

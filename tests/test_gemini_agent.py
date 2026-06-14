@@ -50,6 +50,29 @@ class GeminiAgentBridgeTests(unittest.TestCase):
         self.assertEqual(result.to_answer_payload()["provider"], "gemini")
         self.assertEqual(calls[0][0][0], ["gemini", "-p", "질문"])
 
+    def test_gemini_bridge_parses_json_answer_payload(self):
+        def runner(*args, **kwargs):
+            stdout = (
+                '{"status":"ok","answer":"JSON Gemini 답변",'
+                '"used_pages":[{"path":"wiki/sources/capm.md","title":"CAPM"}],'
+                '"related_pages":[{"path":"wiki/concepts/beta.md"}],'
+                '"evidence":[{"path":"wiki/sources/capm.md","text":"CAPM evidence"}]}'
+            )
+            return subprocess.CompletedProcess(args=args[0], returncode=0, stdout=stdout, stderr="")
+
+        bridge = GeminiAgentBridge(
+            AgentProviderConfig(provider="gemini", model="", codex_command="codex.cmd", provider_command="gemini"),
+            runner=runner,
+        )
+
+        result = bridge.run_prompt("질문")
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.answer, "JSON Gemini 답변")
+        self.assertEqual(result.used_pages, [{"path": "wiki/sources/capm.md", "title": "CAPM"}])
+        self.assertEqual(result.related_pages, [{"path": "wiki/concepts/beta.md"}])
+        self.assertEqual(result.evidence, [{"path": "wiki/sources/capm.md", "text": "CAPM evidence"}])
+
     def test_gemini_bridge_handles_empty_stdout_as_graceful_failure(self):
         def runner(*args, **kwargs):
             return subprocess.CompletedProcess(args=args[0], returncode=0, stdout="  ", stderr="")
