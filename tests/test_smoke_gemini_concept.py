@@ -1,6 +1,7 @@
 import importlib.util
 import os
 import subprocess
+import tempfile
 import unittest
 from contextlib import redirect_stdout
 from io import StringIO
@@ -105,7 +106,7 @@ class SmokeGeminiConceptTests(unittest.TestCase):
         smoke = load_smoke_module()
         captured = []
 
-        smoke.load_environment_for_smoke = lambda: {"exists": True, "loaded": True, "loaded_keys": ["LLM_WIKI_AGENT_PROVIDER"]}
+        smoke.load_environment_for_smoke = lambda ignore_dotenv=False: {"exists": True, "loaded": True, "loaded_keys": ["LLM_WIKI_AGENT_PROVIDER"], "ignored": ignore_dotenv}
         smoke.collect_gemini_cli_diagnostic = lambda env: smoke.CliDiagnostic("gemini", "gemini", True, True, "usable")
 
         def fake_run_concept_smoke():
@@ -152,6 +153,33 @@ class SmokeGeminiConceptTests(unittest.TestCase):
         self.assertEqual(restored_concept_provider, "codex")
         self.assertEqual(restored_ingest_provider, "codex")
         self.assertIn("resolved concept provider: gemini", output.getvalue())
+
+    def test_ignore_dotenv_skips_repo_env_and_reports_default_model(self):
+        smoke = load_smoke_module()
+
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {"LLM_WIKI_CONCEPT_PROVIDER": "gemini"}, clear=True):
+            root = Path(tmp)
+            (root / ".env").write_text(
+                "\n".join(
+                    [
+                        "LLM_WIKI_AGENT_PROVIDER=codex",
+                        "LLM_WIKI_CONCEPT_MODEL=gpt-5.5",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            env_load = smoke.load_environment_for_smoke(root, ignore_dotenv=True)
+            summary = smoke.summarize_environment(os.environ, env_load)
+
+        rendered = "\n".join(smoke.format_environment_summary(summary))
+
+        self.assertTrue(env_load["exists"])
+        self.assertFalse(env_load["loaded"])
+        self.assertTrue(env_load["ignored"])
+        self.assertEqual(summary["resolved_concept_provider"], "gemini")
+        self.assertEqual(summary["resolved_concept_model"], "gemini-2.5-flash")
+        self.assertIn(".env loaded: no (--ignore-dotenv)", rendered)
 
     def test_gemini_cli_missing_fails_with_clear_message(self):
         smoke = load_smoke_module()
@@ -231,7 +259,7 @@ class SmokeGeminiConceptTests(unittest.TestCase):
     def test_main_reports_forced_gemini_failure_without_traceback(self):
         smoke = load_smoke_module()
 
-        smoke.load_environment_for_smoke = lambda: {"exists": False, "loaded": False, "loaded_keys": []}
+        smoke.load_environment_for_smoke = lambda ignore_dotenv=False: {"exists": False, "loaded": False, "loaded_keys": [], "ignored": ignore_dotenv}
         smoke.collect_gemini_cli_diagnostic = lambda env: smoke.CliDiagnostic(
             "gemini",
             "gemini",

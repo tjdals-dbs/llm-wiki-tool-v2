@@ -126,7 +126,7 @@ class SmokeAnswerProviderTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {}, clear=True):
             domain_path = self._write_domain(Path(tmp))
-            smoke.load_environment_for_smoke = lambda: {"loaded": False, "loaded_keys": []}
+            smoke.load_environment_for_smoke = lambda ignore_dotenv=False: {"exists": False, "loaded": False, "loaded_keys": [], "ignored": ignore_dotenv}
             smoke.collect_cli_diagnostics = lambda env: {
                 "codex": smoke.CliDiagnostic("codex", "codex.cmd", False, False, "missing"),
                 "gemini": smoke.CliDiagnostic("gemini", "gemini", False, False, "version command failed: missing"),
@@ -150,6 +150,33 @@ class SmokeAnswerProviderTests(unittest.TestCase):
         self.assertIn("SMOKE RESULT: FAIL", text)
         self.assertIn("Gemini CLI command not found", text)
         self.assertNotIn("Traceback", text)
+
+    def test_ignore_dotenv_skips_repo_env_and_reports_gemini_default_model(self):
+        smoke = load_smoke_module()
+
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {"LLM_WIKI_ANSWER_PROVIDER": "gemini"}, clear=True):
+            root = Path(tmp)
+            (root / ".env").write_text(
+                "\n".join(
+                    [
+                        "LLM_WIKI_AGENT_PROVIDER=codex",
+                        "LLM_WIKI_ANSWER_MODEL=gpt-5.5",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            env_load = smoke.load_environment_for_smoke(root, ignore_dotenv=True)
+            summary = smoke.summarize_environment(os.environ, env_load)
+
+        rendered = "\n".join(smoke.format_environment_summary(summary))
+
+        self.assertTrue(env_load["exists"])
+        self.assertFalse(env_load["loaded"])
+        self.assertTrue(env_load["ignored"])
+        self.assertEqual(summary["resolved_answer_provider"], "gemini")
+        self.assertEqual(summary["resolved_answer_model"], "gemini-2.5-flash")
+        self.assertIn(".env loaded: no (--ignore-dotenv)", rendered)
 
     def _write_domain(self, root: Path) -> Path:
         domain = root / "domain.yml"

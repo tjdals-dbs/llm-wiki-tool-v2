@@ -60,63 +60,74 @@ def main(argv: list[str] | None = None) -> int:
         choices=["auto", PROVIDER_CODEX, PROVIDER_GEMINI, PROVIDER_RULE_BASED],
         help="force the answer provider for this smoke run",
     )
+    parser.add_argument(
+        "--ignore-dotenv",
+        action="store_true",
+        help="do not load the repository .env file; OS environment variables are still respected",
+    )
     args = parser.parse_args(argv)
 
     forced_provider = "" if args.provider == "auto" else args.provider
-    env_load = load_environment_for_smoke()
+    env_load = load_environment_for_smoke(ignore_dotenv=args.ignore_dotenv)
+    previous_provider = os.environ.get("LLM_WIKI_ANSWER_PROVIDER")
     if forced_provider:
         os.environ["LLM_WIKI_ANSWER_PROVIDER"] = forced_provider
 
-    env_summary = summarize_environment(os.environ, env_load)
-    print("Environment")
-    for line in format_environment_summary(env_summary):
-        print(f"- {line}")
-
-    diagnostics = collect_cli_diagnostics(os.environ)
-    print("")
-    print("CLI Diagnostics")
-    for line in format_cli_diagnostics(diagnostics):
-        print(f"- {line}")
-
     try:
-        answer = run_answer_smoke(Path(args.domain), args.question, provider=forced_provider)
-    except Exception as exc:
-        answer = {
-            "provider": "",
-            "fallback": False,
-            "status": "runtime_error",
-            "fallback_reason": str(exc),
-            "answer_preview": "",
-            "used_pages_count": 0,
-            "evidence_count": 0,
-        }
+        env_summary = summarize_environment(os.environ, env_load)
+        print("Environment")
+        for line in format_environment_summary(env_summary):
+            print(f"- {line}")
 
-    print("")
-    print("Answer Smoke")
-    for line in format_answer_smoke(answer):
-        print(f"- {line}")
+        diagnostics = collect_cli_diagnostics(os.environ)
+        print("")
+        print("CLI Diagnostics")
+        for line in format_cli_diagnostics(diagnostics):
+            print(f"- {line}")
 
-    classification = classify_smoke_result(answer, diagnostics, forced_provider=forced_provider)
-    print("")
-    print(f"SMOKE RESULT: {classification.label}")
-    print(f"- Answer provider: {answer.get('provider', '')}")
-    print(f"- Fallback: {str(answer.get('fallback', False)).lower()}")
-    print(f"- Evidence count: {answer.get('evidence_count', 0)}")
-    if classification.reason:
-        print(f"- Reason: {classification.reason}")
-    elif answer.get("fallback_reason"):
-        print(f"- Reason: {answer.get('fallback_reason')}")
-    return classification.exit_code
+        try:
+            answer = run_answer_smoke(Path(args.domain), args.question, provider=forced_provider)
+        except Exception as exc:
+            answer = {
+                "provider": "",
+                "fallback": False,
+                "status": "runtime_error",
+                "fallback_reason": str(exc),
+                "answer_preview": "",
+                "used_pages_count": 0,
+                "evidence_count": 0,
+            }
+
+        print("")
+        print("Answer Smoke")
+        for line in format_answer_smoke(answer):
+            print(f"- {line}")
+
+        classification = classify_smoke_result(answer, diagnostics, forced_provider=forced_provider)
+        print("")
+        print(f"SMOKE RESULT: {classification.label}")
+        print(f"- Answer provider: {answer.get('provider', '')}")
+        print(f"- Fallback: {str(answer.get('fallback', False)).lower()}")
+        print(f"- Evidence count: {answer.get('evidence_count', 0)}")
+        if classification.reason:
+            print(f"- Reason: {classification.reason}")
+        elif answer.get("fallback_reason"):
+            print(f"- Reason: {answer.get('fallback_reason')}")
+        return classification.exit_code
+    finally:
+        if forced_provider:
+            _restore_env_value("LLM_WIKI_ANSWER_PROVIDER", previous_provider)
 
 
-def load_environment_for_smoke(project_root: Path | None = None) -> dict[str, Any]:
+def load_environment_for_smoke(project_root: Path | None = None, *, ignore_dotenv: bool = False) -> dict[str, Any]:
     root = project_root or PROJECT_ROOT
     env_path = root / ".env"
-    loaded = load_dotenv_if_present(root)
+    loaded = {} if ignore_dotenv else load_dotenv_if_present(root)
     return {
         "exists": env_path.exists(),
         "loaded": bool(loaded),
         "loaded_keys": sorted(loaded),
+        "ignored": bool(ignore_dotenv),
         "path": str(env_path),
     }
 
@@ -136,9 +147,14 @@ def summarize_environment(env: Mapping[str, str], env_load: Mapping[str, Any] | 
 
 def format_environment_summary(summary: Mapping[str, Any]) -> list[str]:
     env_load = summary.get("env_load", {})
+    loaded_text = (
+        "no (--ignore-dotenv)"
+        if bool(env_load.get("ignored", False))
+        else _yes_no(bool(env_load.get("loaded", False)))
+    )
     lines = [
         f".env exists: {_yes_no(bool(env_load.get('exists', False)))}",
-        f".env loaded: {_yes_no(bool(env_load.get('loaded', False)))}",
+        f".env loaded: {loaded_text}",
     ]
     loaded_keys = env_load.get("loaded_keys") or []
     if loaded_keys:
@@ -334,6 +350,13 @@ def _preview(text: str, limit: int = 240) -> str:
 
 def _yes_no(value: bool) -> str:
     return "yes" if value else "no"
+
+
+def _restore_env_value(name: str, value: str | None) -> None:
+    if value is None:
+        os.environ.pop(name, None)
+    else:
+        os.environ[name] = value
 
 
 if __name__ == "__main__":

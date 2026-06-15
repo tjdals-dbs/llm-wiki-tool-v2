@@ -133,16 +133,16 @@ Gemini answer provider smoke 확인:
 
 ```powershell
 $env:LLM_WIKI_ANSWER_PROVIDER="gemini"
-python scripts\smoke_answer_provider.py --domain examples\finance\domain.yml --question "CAPM은 무엇인가?" --provider gemini
+python scripts\smoke_answer_provider.py --domain examples\finance\domain.yml --question "CAPM은 무엇인가?" --provider gemini --ignore-dotenv
 ```
 
-`--provider gemini`로 answer provider를 강제했는데 Gemini CLI가 없거나 Gemini 호출이 실패해 `rule_based` fallback으로 내려가면 smoke runner는 non-zero exit code를 반환합니다. `--provider auto`에서 fallback이 정상 동작하면 fallback 검증 성공으로 보고 exit code 0을 반환합니다.
+`--provider gemini`로 answer provider를 강제했는데 Gemini CLI가 없거나 Gemini 호출이 실패해 `rule_based` fallback으로 내려가면 smoke runner는 non-zero exit code를 반환합니다. `--provider auto`에서 fallback이 정상 동작하면 fallback 검증 성공으로 보고 exit code 0을 반환합니다. `--ignore-dotenv`를 붙이면 repo의 `.env`를 읽지 않아, 기존 `LLM_WIKI_*_MODEL` override가 Gemini smoke에 섞이는 일을 피할 수 있습니다.
 
 Gemini ingest provider smoke 확인:
 
 ```powershell
 $env:LLM_WIKI_INGEST_PROVIDER="gemini"
-python scripts\smoke_gemini_ingest.py
+python scripts\smoke_gemini_ingest.py --ignore-dotenv
 ```
 
 Gemini ingest smoke는 실행 중 `LLM_WIKI_INGEST_PROVIDER=gemini`을 우선 적용합니다. Gemini CLI가 없거나 source summary 생성이 fallback으로 내려가면 non-zero exit code를 반환합니다. 이 smoke는 임시 public-safe domain을 사용하므로 `examples/finance/wiki` 산출물을 수정하지 않습니다.
@@ -151,7 +151,7 @@ Gemini concept provider smoke 확인:
 
 ```powershell
 $env:LLM_WIKI_CONCEPT_PROVIDER="gemini"
-python scripts\smoke_gemini_concept.py
+python scripts\smoke_gemini_concept.py --ignore-dotenv
 ```
 
 Gemini concept smoke는 실행 중 `LLM_WIKI_CONCEPT_PROVIDER=gemini`을 우선 적용하고 source 생성 단계는 deterministic fallback으로 격리합니다. Gemini CLI가 없거나 concept draft가 fallback으로 내려가면 non-zero exit code를 반환합니다. 이 smoke도 임시 public-safe domain을 사용하므로 `examples/finance/wiki` 산출물을 수정하지 않습니다.

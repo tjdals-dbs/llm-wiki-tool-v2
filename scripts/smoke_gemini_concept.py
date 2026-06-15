@@ -63,10 +63,15 @@ def main(argv: list[str] | None = None) -> int:
         choices=[PROVIDER_GEMINI],
         help="Gemini concept provider to diagnose; kept explicit for parity with other smoke runners",
     )
+    parser.add_argument(
+        "--ignore-dotenv",
+        action="store_true",
+        help="do not load the repository .env file; OS environment variables are still respected",
+    )
     args = parser.parse_args(argv)
 
     forced_provider = args.provider
-    env_load = load_environment_for_smoke()
+    env_load = load_environment_for_smoke(ignore_dotenv=args.ignore_dotenv)
     previous_concept_provider = os.environ.get("LLM_WIKI_CONCEPT_PROVIDER")
     previous_ingest_provider = os.environ.get("LLM_WIKI_INGEST_PROVIDER")
     os.environ["LLM_WIKI_CONCEPT_PROVIDER"] = PROVIDER_GEMINI
@@ -124,14 +129,15 @@ def main(argv: list[str] | None = None) -> int:
         _restore_env_value("LLM_WIKI_INGEST_PROVIDER", previous_ingest_provider)
 
 
-def load_environment_for_smoke(project_root: Path | None = None) -> dict[str, Any]:
+def load_environment_for_smoke(project_root: Path | None = None, *, ignore_dotenv: bool = False) -> dict[str, Any]:
     root = project_root or PROJECT_ROOT
     env_path = root / ".env"
-    loaded = load_dotenv_if_present(root)
+    loaded = {} if ignore_dotenv else load_dotenv_if_present(root)
     return {
         "exists": env_path.exists(),
         "loaded": bool(loaded),
         "loaded_keys": sorted(loaded),
+        "ignored": bool(ignore_dotenv),
         "path": str(env_path),
     }
 
@@ -150,9 +156,14 @@ def summarize_environment(env: Mapping[str, str], env_load: Mapping[str, Any] | 
 
 def format_environment_summary(summary: Mapping[str, Any]) -> list[str]:
     env_load = summary.get("env_load", {})
+    loaded_text = (
+        "no (--ignore-dotenv)"
+        if bool(env_load.get("ignored", False))
+        else _yes_no(bool(env_load.get("loaded", False)))
+    )
     lines = [
         f".env exists: {_yes_no(bool(env_load.get('exists', False)))}",
-        f".env loaded: {_yes_no(bool(env_load.get('loaded', False)))}",
+        f".env loaded: {loaded_text}",
     ]
     loaded_keys = env_load.get("loaded_keys") or []
     if loaded_keys:
