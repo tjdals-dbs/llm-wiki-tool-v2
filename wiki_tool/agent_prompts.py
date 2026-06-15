@@ -48,6 +48,7 @@ def build_ingest_prompt(source_text: str = "") -> str:
             "## Key Points",
             "## Evidence",
             "## Candidate Concepts",
+            "## Candidate Concept Evidence",
             "약한 source는 억지로 요약하지 말고 Summary와 Evidence에 needs_review 이유를 명확히 적으세요.",
             "",
             "extracted source text:",

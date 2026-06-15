@@ -6,7 +6,7 @@ from pathlib import Path
 
 from .config import DomainConfig
 from .agent_hooks import AgentHookResult, draft_source_summary_with_agent
-from .agent_provider import PROVIDER_CODEX, PROVIDER_RULE_BASED, load_agent_provider_config
+from .agent_provider import PROVIDER_CODEX, PROVIDER_GEMINI, PROVIDER_RULE_BASED, load_agent_provider_config
 from .concept_filter import clean_candidate_concept, filter_candidate_concepts, is_valid_candidate_concept
 from .extractors import ExtractedSource, extract_source
 from .manifest import ManifestEntry, read_manifest, write_manifest
@@ -29,6 +29,7 @@ class SourceSummaryResult:
     skipped_count: int
     provider: str = "rule_based"
     codex_used_count: int = 0
+    gemini_used_count: int = 0
     fallback_count: int = 0
 
 
@@ -46,9 +47,11 @@ def summarize_new_sources(config: DomainConfig, limit: int | None = None) -> Sou
     needs_review_count = 0
     skipped_count = 0
     provider_config = load_agent_provider_config("ingest")
-    provider = provider_config.provider if provider_config.provider == PROVIDER_CODEX else PROVIDER_RULE_BASED
-    unsupported_provider = provider_config.provider not in {PROVIDER_CODEX, PROVIDER_RULE_BASED}
+    agent_providers = {PROVIDER_CODEX, PROVIDER_GEMINI}
+    provider = provider_config.provider if provider_config.provider in agent_providers else PROVIDER_RULE_BASED
+    unsupported_provider = provider_config.provider not in {*agent_providers, PROVIDER_RULE_BASED}
     codex_used_count = 0
+    gemini_used_count = 0
     fallback_count = 0
     processed = 0
 
@@ -75,29 +78,32 @@ def summarize_new_sources(config: DomainConfig, limit: int | None = None) -> Sou
         rule_based_page = _render_source_page(entry, extracted, candidate_concepts, quality)
         source_content = rule_based_page
         hook_result: AgentHookResult | None = None
-        codex_quality = ""
-        if provider == PROVIDER_CODEX:
+        agent_quality = ""
+        if provider in agent_providers:
             hook_result = draft_source_summary_with_agent(extracted.text)
             validation = validate_source_page_draft(hook_result.draft)
-            if hook_result.provider == "codex" and not hook_result.fallback and validation["ok"]:
+            if hook_result.provider == provider and not hook_result.fallback and validation["ok"]:
                 draft = _sanitize_candidate_concept_sections(hook_result.draft)
                 source_content = _with_source_pipeline_metadata(
                     draft,
                     entry,
-                    provider="codex",
+                    provider=provider,
                     codex_status=hook_result.status,
                     fallback=False,
                     fallback_reason="",
                 )
-                codex_quality = _quality(source_content)
-                codex_used_count += 1
+                agent_quality = _quality(source_content)
+                if provider == PROVIDER_CODEX:
+                    codex_used_count += 1
+                elif provider == PROVIDER_GEMINI:
+                    gemini_used_count += 1
             else:
                 fallback_count += 1
                 reason = hook_result.error or validation["reason"]
                 source_content = _with_source_pipeline_metadata(
                     rule_based_page,
                     entry,
-                    provider="codex",
+                    provider=provider,
                     codex_status=hook_result.status,
                     fallback=True,
                     fallback_reason=reason,
@@ -117,7 +123,7 @@ def summarize_new_sources(config: DomainConfig, limit: int | None = None) -> Sou
         source_page.write_text(source_content, encoding="utf-8")
 
         relative_source_page = source_page.relative_to(config.root).as_posix()
-        final_quality = codex_quality or quality.quality
+        final_quality = agent_quality or quality.quality
         status = "summarized" if final_quality == "usable" else "needs_review"
         if status == "summarized":
             summarized_count += 1
@@ -141,6 +147,7 @@ def summarize_new_sources(config: DomainConfig, limit: int | None = None) -> Sou
         skipped_count=skipped_count,
         provider=provider,
         codex_used_count=codex_used_count,
+        gemini_used_count=gemini_used_count,
         fallback_count=fallback_count,
     )
 

@@ -92,6 +92,27 @@ class GeminiAgentBridgeTests(unittest.TestCase):
         self.assertIn("changes summary", calls[0][-1])
         self.assertIn("source 1, concept 1", calls[0][-1])
 
+    def test_gemini_bridge_can_run_ingest_prompt(self):
+        calls = []
+
+        def runner(*args, **kwargs):
+            calls.append(args[0])
+            return subprocess.CompletedProcess(args=args[0], returncode=0, stdout="# Source\n\n## Summary\n\nok", stderr="")
+
+        bridge = GeminiAgentBridge(
+            AgentProviderConfig(provider="gemini", model="", codex_command="codex.cmd", provider_command="gemini"),
+            runner=runner,
+        )
+
+        result = bridge.run_ingest("raw source text")
+
+        self.assertTrue(result.ok)
+        self.assertIn("# Source", result.answer)
+        self.assertIn("raw", calls[0][-1])
+        self.assertIn("## Summary", calls[0][-1])
+        self.assertIn("## Candidate Concept Evidence", calls[0][-1])
+        self.assertIn("raw source text", calls[0][-1])
+
     def test_gemini_bridge_handles_empty_stdout_as_graceful_failure(self):
         def runner(*args, **kwargs):
             return subprocess.CompletedProcess(args=args[0], returncode=0, stdout="  ", stderr="")

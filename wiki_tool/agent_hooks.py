@@ -36,8 +36,15 @@ def draft_source_summary_with_agent(
     *,
     env: Mapping[str, str] | None = None,
     bridge_factory: BridgeFactory = CodexAgentBridge,
+    gemini_bridge_factory: BridgeFactory = GeminiAgentBridge,
 ) -> AgentHookResult:
-    return _run_hook("ingest", source_text, env=env, bridge_factory=bridge_factory)
+    return _run_hook(
+        "ingest",
+        source_text,
+        env=env,
+        bridge_factory=bridge_factory,
+        gemini_bridge_factory=gemini_bridge_factory,
+    )
 
 
 def draft_concept_update_with_agent(
@@ -74,9 +81,9 @@ def _run_hook(
     gemini_bridge_factory: BridgeFactory | None = None,
 ) -> AgentHookResult:
     config = load_agent_provider_config(role, env)
-    if config.provider == PROVIDER_GEMINI and role == "review":
+    if config.provider == PROVIDER_GEMINI and role in {"ingest", "review"}:
         bridge = (gemini_bridge_factory or GeminiAgentBridge)(config)
-        result = bridge.run_review(payload)
+        result = bridge.run_ingest(payload) if role == "ingest" else bridge.run_review(payload)
         if result.ok:
             return AgentHookResult(
                 role=role,

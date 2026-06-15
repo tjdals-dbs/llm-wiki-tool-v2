@@ -20,7 +20,7 @@ AGENT_PROVIDER_ROLES = ("answer", "ingest", "concept", "review")
 AGENT_PROVIDER_DETAIL_DEFAULT_VISIBLE = False
 AGENT_PROVIDER_SUPPORTED_ROLES = {
     PROVIDER_CODEX: frozenset(AGENT_PROVIDER_ROLES),
-    PROVIDER_GEMINI: frozenset({"answer", "review"}),
+    PROVIDER_GEMINI: frozenset({"answer", "ingest", "review"}),
     PROVIDER_RULE_BASED: frozenset(AGENT_PROVIDER_ROLES),
 }
 
@@ -194,10 +194,11 @@ class DesktopGuiPresenter:
     def summarize_new_sources(self) -> str:
         result = self.adapter.summarize_new_sources()
         navigation = " navigation 갱신" if result.get("navigation_refreshed") else ""
+        agent_usage = _source_summary_agent_usage(result)
         return (
             "source 요약 완료: "
             f"요약 {result.get('summarized_count', 0)}개, "
-            f"Codex {result.get('codex_used_count', 0)}개, "
+            f"{agent_usage}, "
             f"fallback {result.get('fallback_count', 0)}개, "
             f"검토 필요 {result.get('needs_review_count', 0)}개"
             f"{navigation}"
@@ -353,6 +354,15 @@ def _route_result_from_answer(answer: dict[str, Any], *, route: str, question: s
         fallback_reason=str(answer["fallback_reason"]) if answer.get("fallback_reason") else None,
         error=str(answer["error"]) if answer.get("error") else None,
     )
+
+
+def _source_summary_agent_usage(result: dict[str, Any]) -> str:
+    provider = str(result.get("provider") or "rule_based")
+    if provider == PROVIDER_GEMINI:
+        return f"Gemini {result.get('gemini_used_count', 0)}개"
+    if provider == PROVIDER_CODEX:
+        return f"Codex {result.get('codex_used_count', 0)}개"
+    return "agent 0개"
 
 
 def _agent_route_line(message: str) -> str:

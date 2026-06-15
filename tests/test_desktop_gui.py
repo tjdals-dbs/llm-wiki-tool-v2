@@ -824,7 +824,7 @@ class DesktopGuiTests(unittest.TestCase):
         self.assertIn("concept: codex / gpt-5.5", status.detail_lines)
         self.assertIn("review: codex / gpt-5.5", status.detail_lines)
 
-    def test_agent_provider_status_marks_gemini_answer_and_review_as_supported(self):
+    def test_agent_provider_status_marks_gemini_answer_ingest_and_review_as_supported(self):
         env = {
             "LLM_WIKI_AGENT_PROVIDER": "gemini",
             "LLM_WIKI_AGENT_MODEL": "gemini-pro",
@@ -834,7 +834,7 @@ class DesktopGuiTests(unittest.TestCase):
 
         self.assertEqual(status.summary, "agent: gemini / gemini-pro")
         self.assertIn("answer: gemini / gemini-pro", status.detail_lines)
-        self.assertIn("ingest: rule_based fallback", status.detail_lines)
+        self.assertIn("ingest: gemini / gemini-pro", status.detail_lines)
         self.assertIn("concept: rule_based fallback", status.detail_lines)
         self.assertIn("review: gemini / gemini-pro", status.detail_lines)
 

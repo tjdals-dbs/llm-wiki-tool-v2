@@ -131,6 +131,66 @@ class SourceSummarizerTests(unittest.TestCase):
             self.assertIn("- fallback: false", content)
             hook.assert_called_once()
 
+    def test_gemini_ingest_draft_is_used_when_valid_and_raw_is_unchanged(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            domain = load_domain_config(write_domain(root), root=root)
+            raw_file = root / "raw" / "gemini.md"
+            raw_file.parent.mkdir()
+            raw_text = "# Gemini\nGemini source text with JWT and Spring Security."
+            raw_file.write_text(raw_text, encoding="utf-8")
+            scan_raw_sources(domain)
+            gemini_draft = "\n".join(
+                [
+                    "# Gemini Source",
+                    "",
+                    "## Summary",
+                    "",
+                    "Gemini source summary.",
+                    "",
+                    "## Key Points",
+                    "",
+                    "- JWT is a token format.",
+                    "- Spring Security is a security framework.",
+                    "",
+                    "## Evidence",
+                    "",
+                    "- Gemini source text with JWT and Spring Security.",
+                    "",
+                    "## Candidate Concepts",
+                    "",
+                    "- JWT",
+                    "- Spring Security",
+                    "",
+                    "## Candidate Concept Evidence",
+                    "",
+                    "- JWT: Gemini source text with JWT and Spring Security.",
+                    "- Spring Security: Gemini source text with JWT and Spring Security.",
+                ]
+            )
+
+            with patch.dict("os.environ", {"LLM_WIKI_INGEST_PROVIDER": "gemini"}, clear=True), patch(
+                "wiki_tool.summarizer.draft_source_summary_with_agent"
+            ) as hook:
+                hook.return_value = AgentHookResult(
+                    role="ingest",
+                    provider="gemini",
+                    fallback=False,
+                    status="ok",
+                    draft=gemini_draft,
+                )
+                result = summarize_new_sources(domain)
+
+            content = (root / "wiki" / "sources" / "gemini.md").read_text(encoding="utf-8")
+            self.assertEqual(result.provider, "gemini")
+            self.assertEqual(result.codex_used_count, 0)
+            self.assertEqual(result.gemini_used_count, 1)
+            self.assertEqual(result.fallback_count, 0)
+            self.assertIn("Gemini source summary.", content)
+            self.assertIn("- provider: gemini", content)
+            self.assertIn("- fallback: false", content)
+            self.assertEqual(raw_file.read_text(encoding="utf-8"), raw_text)
+
     def test_codex_ingest_candidate_concepts_are_filtered_before_write(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -198,6 +258,56 @@ class SourceSummarizerTests(unittest.TestCase):
             self.assertNotIn("raw source는 concept page가 되면 안 된다", "\n".join(candidates))
             self.assertTrue(all(not item.startswith("CAPM은 기대수익률") for item in concept_evidence))
 
+    def test_gemini_ingest_candidate_concepts_are_filtered_before_write(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            domain = load_domain_config(write_domain(root), root=root)
+            raw_file = root / "raw" / "security.md"
+            raw_file.parent.mkdir()
+            raw_file.write_text("# Security\nJWT and Spring Security are described here.", encoding="utf-8")
+            scan_raw_sources(domain)
+            gemini_draft = "\n".join(
+                [
+                    "# Gemini Security Source",
+                    "",
+                    "## Summary",
+                    "",
+                    "JWT and Spring Security are described here.",
+                    "",
+                    "## Key Points",
+                    "",
+                    "- JWT is a token format.",
+                    "",
+                    "## Evidence",
+                    "",
+                    "- JWT and Spring Security are described here.",
+                    "",
+                    "## Candidate Concepts",
+                    "",
+                    "- JWT",
+                    "- Spring Security",
+                    "- Users put files in the raw folder.",
+                    "- JWT is a token format.",
+                    "",
+                    "## Candidate Concept Evidence",
+                    "",
+                    "- JWT: JWT and Spring Security are described here.",
+                    "- Spring Security: JWT and Spring Security are described here.",
+                    "- Users put files in the raw folder.: invalid",
+                ]
+            )
+
+            with patch.dict("os.environ", {"LLM_WIKI_INGEST_PROVIDER": "gemini"}, clear=True), patch(
+                "wiki_tool.summarizer.draft_source_summary_with_agent"
+            ) as hook:
+                hook.return_value = AgentHookResult("ingest", "gemini", False, "ok", gemini_draft)
+                result = summarize_new_sources(domain)
+
+            content = (root / "wiki" / "sources" / "security.md").read_text(encoding="utf-8")
+            self.assertEqual(result.gemini_used_count, 1)
+            self.assertEqual(section_bullets(content, "Candidate Concepts"), ["JWT", "Spring Security"])
+            self.assertTrue(all("Users put files" not in item for item in section_bullets(content, "Candidate Concept Evidence")))
+
     def test_codex_ingest_draft_missing_required_sections_falls_back(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -223,6 +333,34 @@ class SourceSummarizerTests(unittest.TestCase):
             self.assertEqual(result.codex_used_count, 0)
             self.assertEqual(result.fallback_count, 1)
             self.assertIn("CAPM은 기대수익률", content)
+            self.assertIn("- fallback: true", content)
+            self.assertIn("missing_sections", content)
+
+    def test_gemini_ingest_draft_missing_required_sections_falls_back(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            domain = load_domain_config(write_domain(root), root=root)
+            raw_file = root / "raw" / "gemini.md"
+            raw_file.parent.mkdir()
+            raw_file.write_text("# Gemini\nGemini source text with JWT.", encoding="utf-8")
+            scan_raw_sources(domain)
+
+            with patch.dict("os.environ", {"LLM_WIKI_INGEST_PROVIDER": "gemini"}, clear=True), patch(
+                "wiki_tool.summarizer.draft_source_summary_with_agent"
+            ) as hook:
+                hook.return_value = AgentHookResult(
+                    role="ingest",
+                    provider="gemini",
+                    fallback=False,
+                    status="ok",
+                    draft="# Broken\n\n## Summary\n\nmissing required sections",
+                )
+                result = summarize_new_sources(domain)
+
+            content = (root / "wiki" / "sources" / "gemini.md").read_text(encoding="utf-8")
+            self.assertEqual(result.gemini_used_count, 0)
+            self.assertEqual(result.fallback_count, 1)
+            self.assertIn("- provider: gemini", content)
             self.assertIn("- fallback: true", content)
             self.assertIn("missing_sections", content)
 
@@ -253,6 +391,35 @@ class SourceSummarizerTests(unittest.TestCase):
             self.assertIn("CAPM은 기대수익률", content)
             self.assertIn("codex_timeout", content)
             self.assertIn("timeout", content)
+
+    def test_gemini_ingest_failure_falls_back_to_rule_based_page(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            domain = load_domain_config(write_domain(root), root=root)
+            raw_file = root / "raw" / "gemini.md"
+            raw_file.parent.mkdir()
+            raw_file.write_text("# Gemini\nGemini source text with JWT.", encoding="utf-8")
+            scan_raw_sources(domain)
+
+            with patch.dict("os.environ", {"LLM_WIKI_AGENT_PROVIDER": "gemini"}, clear=True), patch(
+                "wiki_tool.summarizer.draft_source_summary_with_agent"
+            ) as hook:
+                hook.return_value = AgentHookResult(
+                    role="ingest",
+                    provider="rule_based",
+                    fallback=True,
+                    status="gemini_empty_output",
+                    draft="",
+                    error="empty",
+                )
+                result = summarize_new_sources(domain)
+
+            content = (root / "wiki" / "sources" / "gemini.md").read_text(encoding="utf-8")
+            self.assertEqual(result.provider, "gemini")
+            self.assertEqual(result.gemini_used_count, 0)
+            self.assertEqual(result.fallback_count, 1)
+            self.assertIn("gemini_empty_output", content)
+            self.assertIn("empty", content)
 
     def test_weak_pdf_is_left_as_needs_review_with_pdf_vision_action(self):
         with tempfile.TemporaryDirectory() as tmp:
