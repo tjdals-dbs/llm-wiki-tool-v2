@@ -2,6 +2,7 @@ import unittest
 
 from wiki_tool.agent_provider import (
     DEFAULT_CODEX_COMMAND,
+    DEFAULT_GEMINI_MODEL,
     PROVIDER_CODEX,
     PROVIDER_GEMINI,
     PROVIDER_RULE_BASED,
@@ -120,6 +121,18 @@ class AgentProviderConfigTests(unittest.TestCase):
 
         self.assertEqual(gemini_selected.provider, PROVIDER_GEMINI)
 
+    def test_auto_detection_falls_through_to_gemini_cmd_on_windows(self):
+        gemini_selected = select_agent_provider(env={}, runner=FakeCliRunner({"gemini.cmd"}))
+
+        self.assertEqual(gemini_selected.provider, PROVIDER_GEMINI)
+        self.assertEqual(gemini_selected.command, "gemini.cmd")
+
+    def test_auto_detection_can_use_bare_codex_when_cmd_wrapper_is_missing(self):
+        codex_selected = select_agent_provider(env={}, runner=FakeCliRunner({"codex"}))
+
+        self.assertEqual(codex_selected.provider, PROVIDER_CODEX)
+        self.assertEqual(codex_selected.command, "codex")
+
     def test_auto_detection_uses_rule_based_when_all_cli_providers_fail(self):
         selected = select_agent_provider(env={}, runner=FakeCliRunner())
 
@@ -146,6 +159,19 @@ class AgentProviderConfigTests(unittest.TestCase):
         self.assertEqual(detection.command, "gemini-local")
         self.assertTrue(detection.usable)
 
+    def test_gemini_provider_uses_provider_default_model_without_gpt_leakage(self):
+        config = load_agent_provider_config("answer", env={}, runner=FakeCliRunner({"gemini.cmd"}))
+
+        self.assertEqual(config.provider, PROVIDER_GEMINI)
+        self.assertEqual(config.model, DEFAULT_GEMINI_MODEL)
+        self.assertFalse(config.model.startswith("gpt-"))
+
+    def test_explicit_gemini_provider_uses_default_model_when_model_env_is_missing(self):
+        config = load_agent_provider_config("concept", env={"LLM_WIKI_CONCEPT_PROVIDER": "gemini"}, runner=FakeCliRunner({"gemini.cmd"}))
+
+        self.assertEqual(config.provider, PROVIDER_GEMINI)
+        self.assertEqual(config.model, DEFAULT_GEMINI_MODEL)
+
     def test_detection_preserves_failure_reasons(self):
         detections = detect_agent_providers(env={}, runner=FakeCliRunner())
         codex_detection = next(item for item in detections if item.provider == PROVIDER_CODEX)
@@ -164,7 +190,7 @@ class AgentProviderConfigTests(unittest.TestCase):
         select_agent_provider(env={}, runner=runner)
 
         self.assertTrue(runner.calls)
-        self.assertTrue(all(call[0] in {"codex.cmd", "gemini"} for call in runner.calls))
+        self.assertTrue(all(call[0] in {"codex.cmd", "codex", "gemini.cmd", "gemini"} for call in runner.calls))
 
 
 if __name__ == "__main__":

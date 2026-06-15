@@ -813,30 +813,28 @@ class DesktopGuiTests(unittest.TestCase):
     def test_agent_provider_status_summarizes_codex_roles(self):
         env = {
             "LLM_WIKI_AGENT_PROVIDER": "codex",
-            "LLM_WIKI_AGENT_MODEL": "gpt-5.5",
         }
 
         status = build_agent_provider_panel_status(env=env)
 
-        self.assertEqual(status.summary, "agent: codex / gpt-5.5")
-        self.assertIn("answer: codex / gpt-5.5", status.detail_lines)
-        self.assertIn("ingest: codex / gpt-5.5", status.detail_lines)
-        self.assertIn("concept: codex / gpt-5.5", status.detail_lines)
-        self.assertIn("review: codex / gpt-5.5", status.detail_lines)
+        self.assertEqual(status.summary, "agent: codex / default")
+        self.assertIn("answer: codex / default", status.detail_lines)
+        self.assertIn("ingest: codex / default", status.detail_lines)
+        self.assertIn("concept: codex / default", status.detail_lines)
+        self.assertIn("review: codex / default", status.detail_lines)
 
     def test_agent_provider_status_marks_gemini_all_roles_as_supported(self):
         env = {
             "LLM_WIKI_AGENT_PROVIDER": "gemini",
-            "LLM_WIKI_AGENT_MODEL": "gemini-pro",
         }
 
         status = build_agent_provider_panel_status(env=env)
 
-        self.assertEqual(status.summary, "agent: gemini / gemini-pro")
-        self.assertIn("answer: gemini / gemini-pro", status.detail_lines)
-        self.assertIn("ingest: gemini / gemini-pro", status.detail_lines)
-        self.assertIn("concept: gemini / gemini-pro", status.detail_lines)
-        self.assertIn("review: gemini / gemini-pro", status.detail_lines)
+        self.assertEqual(status.summary, "agent: gemini / gemini-2.5-flash")
+        self.assertIn("answer: gemini / gemini-2.5-flash", status.detail_lines)
+        self.assertIn("ingest: gemini / gemini-2.5-flash", status.detail_lines)
+        self.assertIn("concept: gemini / gemini-2.5-flash", status.detail_lines)
+        self.assertIn("review: gemini / gemini-2.5-flash", status.detail_lines)
 
     def test_agent_provider_status_summarizes_rule_based_without_model(self):
         status = build_agent_provider_panel_status(env={"LLM_WIKI_AGENT_PROVIDER": "rule_based"})

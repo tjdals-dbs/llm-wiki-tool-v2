@@ -28,6 +28,8 @@ ROLE_PROVIDER_ENV = {
 
 DEFAULT_CODEX_COMMAND = "codex.cmd"
 DEFAULT_GEMINI_COMMAND = "gemini"
+DEFAULT_CODEX_MODEL = ""
+DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
 
 PROVIDER_COMMAND_ENV = {
     PROVIDER_CODEX: "LLM_WIKI_CODEX_COMMAND",
@@ -37,6 +39,17 @@ PROVIDER_COMMAND_ENV = {
 DEFAULT_PROVIDER_COMMAND = {
     PROVIDER_CODEX: DEFAULT_CODEX_COMMAND,
     PROVIDER_GEMINI: DEFAULT_GEMINI_COMMAND,
+}
+
+DEFAULT_PROVIDER_COMMAND_CANDIDATES = {
+    PROVIDER_CODEX: ("codex.cmd", "codex"),
+    PROVIDER_GEMINI: ("gemini.cmd", "gemini"),
+}
+
+DEFAULT_PROVIDER_MODEL = {
+    PROVIDER_CODEX: DEFAULT_CODEX_MODEL,
+    PROVIDER_GEMINI: DEFAULT_GEMINI_MODEL,
+    PROVIDER_RULE_BASED: "",
 }
 
 VERSION_ARGS = {
@@ -110,6 +123,13 @@ def resolve_agent_model(role: str, env: Mapping[str, str] | None = None) -> str:
     return source.get("LLM_WIKI_AGENT_MODEL", "").strip()
 
 
+def resolve_provider_model(provider: str, role: str, env: Mapping[str, str] | None = None) -> str:
+    explicit_model = resolve_agent_model(role, env)
+    if explicit_model:
+        return explicit_model
+    return DEFAULT_PROVIDER_MODEL.get(provider.strip().casefold(), "")
+
+
 def resolve_codex_command(env: Mapping[str, str] | None = None) -> str:
     source = os.environ if env is None else env
     return source.get("LLM_WIKI_CODEX_COMMAND", DEFAULT_CODEX_COMMAND).strip() or DEFAULT_CODEX_COMMAND
@@ -125,6 +145,20 @@ def resolve_agent_command(provider: str, env: Mapping[str, str] | None = None) -
     return source.get(env_key, default_command).strip() or default_command
 
 
+def resolve_agent_command_candidates(provider: str, env: Mapping[str, str] | None = None) -> tuple[str, ...]:
+    provider_key = provider.strip().casefold()
+    source = os.environ if env is None else env
+    env_key = PROVIDER_COMMAND_ENV.get(provider_key, "")
+    if env_key:
+        explicit_command = source.get(env_key, "").strip()
+        if explicit_command:
+            return (explicit_command,)
+    candidates = DEFAULT_PROVIDER_COMMAND_CANDIDATES.get(provider_key)
+    if candidates:
+        return candidates
+    return (resolve_agent_command(provider_key, source),)
+
+
 def load_agent_provider_config(
     role: str,
     env: Mapping[str, str] | None = None,
@@ -135,12 +169,18 @@ def load_agent_provider_config(
     source = os.environ if env is None else env
     explicit_provider = _explicit_agent_provider(source, role)
     if explicit_provider:
+        command = "" if explicit_provider == PROVIDER_RULE_BASED else resolve_agent_command(explicit_provider, source)
+        status_message = f"{explicit_provider} selected from environment"
+        if explicit_provider != PROVIDER_RULE_BASED and (runner is not None or env is None or auto_detect):
+            detection = _detect_cli_provider(explicit_provider, role, source, runner or _run_cli_probe)
+            command = detection.command
+            status_message = detection.status_message
         return AgentProviderConfig(
             provider=explicit_provider,
-            model=resolve_agent_model(role, source),
+            model=resolve_provider_model(explicit_provider, role, source),
             codex_command=resolve_codex_command(source),
-            provider_command=resolve_agent_command(explicit_provider, source),
-            status_message=f"{explicit_provider} selected from environment",
+            provider_command=command,
+            status_message=status_message,
             selection_reason="explicit_env",
         )
     should_auto_detect = runner is not None or (auto_detect if auto_detect is not None else env is None)
@@ -148,7 +188,7 @@ def load_agent_provider_config(
         selected = select_agent_provider(role=role, env=source, runner=runner)
         return AgentProviderConfig(
             provider=selected.provider,
-            model=selected.model,
+            model=resolve_provider_model(selected.provider, role, source),
             codex_command=resolve_codex_command(source),
             provider_command=selected.command,
             status_message=selected.status_message,
@@ -156,7 +196,7 @@ def load_agent_provider_config(
         )
     return AgentProviderConfig(
         provider=PROVIDER_RULE_BASED,
-        model=resolve_agent_model(role, source),
+        model=resolve_provider_model(PROVIDER_RULE_BASED, role, source),
         codex_command=resolve_codex_command(source),
         provider_command="",
         status_message="rule_based fallback selected",
@@ -213,7 +253,7 @@ def select_agent_provider(
                 installed=True,
                 authenticated=True,
                 usable=True,
-                model="",
+                model=resolve_provider_model(PROVIDER_RULE_BASED, role, source),
                 status_message="rule_based selected from environment",
                 selection_reason="explicit_env",
             )
@@ -246,7 +286,7 @@ def select_agent_provider(
         installed=True,
         authenticated=True,
         usable=True,
-        model="",
+        model=resolve_provider_model(PROVIDER_RULE_BASED, role, source),
         status_message="no CLI agent provider was usable; using rule_based fallback",
         selection_reason="fallback",
     )
@@ -269,31 +309,47 @@ def _detect_cli_provider(
     env: Mapping[str, str],
     runner: CliRunner,
 ) -> AgentProviderDetection:
-    command = resolve_agent_command(provider, env)
-    version_result = _safe_run_probe(runner, [command, *VERSION_ARGS[provider]])
-    installed = _probe_succeeded(version_result)
-    if not installed:
-        return AgentProviderDetection(
+    first_failure: AgentProviderDetection | None = None
+    for command in resolve_agent_command_candidates(provider, env):
+        version_result = _safe_run_probe(runner, [command, *VERSION_ARGS[provider]])
+        installed = _probe_succeeded(version_result)
+        if not installed:
+            failure = AgentProviderDetection(
+                provider=provider,
+                command=command,
+                installed=False,
+                authenticated=False,
+                usable=False,
+                model=resolve_provider_model(provider, role, env),
+                status_message=f"version command failed: {_probe_error(version_result)}",
+                selection_reason="not_usable",
+            )
+            first_failure = first_failure or failure
+            continue
+        usability_result = _safe_run_probe(runner, [command, *USABILITY_ARGS[provider]])
+        authenticated = _probe_succeeded(usability_result)
+        detection = AgentProviderDetection(
             provider=provider,
             command=command,
-            installed=False,
-            authenticated=False,
-            usable=False,
-            model=resolve_agent_model(role, env),
-            status_message=f"version command failed: {_probe_error(version_result)}",
-            selection_reason="not_usable",
+            installed=True,
+            authenticated=authenticated,
+            usable=authenticated,
+            model=resolve_provider_model(provider, role, env),
+            status_message="usable" if authenticated else f"usable command failed: {_probe_error(usability_result)}",
+            selection_reason="detected" if authenticated else "not_usable",
         )
-    usability_result = _safe_run_probe(runner, [command, *USABILITY_ARGS[provider]])
-    authenticated = _probe_succeeded(usability_result)
-    return AgentProviderDetection(
+        if detection.usable:
+            return detection
+        first_failure = first_failure or detection
+    return first_failure or AgentProviderDetection(
         provider=provider,
-        command=command,
-        installed=True,
-        authenticated=authenticated,
-        usable=authenticated,
-        model=resolve_agent_model(role, env),
-        status_message="usable" if authenticated else f"usable command failed: {_probe_error(usability_result)}",
-        selection_reason="detected" if authenticated else "not_usable",
+        command=resolve_agent_command(provider, env),
+        installed=False,
+        authenticated=False,
+        usable=False,
+        model=resolve_provider_model(provider, role, env),
+        status_message="version command failed: command returned non-zero exit code",
+        selection_reason="not_usable",
     )
 
 

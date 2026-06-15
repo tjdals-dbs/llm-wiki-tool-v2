@@ -201,6 +201,14 @@ class SmokeGeminiIngestTests(unittest.TestCase):
         self.assertIn("fallback: false", rendered)
         self.assertIn("lint ok: true", rendered)
 
+    def test_environment_summary_uses_gemini_default_model_without_model_env(self):
+        smoke = load_smoke_module()
+
+        summary = smoke.summarize_environment({"LLM_WIKI_INGEST_PROVIDER": "gemini"})
+
+        self.assertEqual(summary["resolved_ingest_provider"], "gemini")
+        self.assertEqual(summary["resolved_ingest_model"], "gemini-2.5-flash")
+
     def test_main_reports_forced_gemini_failure_without_traceback(self):
         smoke = load_smoke_module()
 

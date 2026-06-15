@@ -62,8 +62,9 @@ class AgentProviderRoleStatus:
     @property
     def text(self) -> str:
         provider_text = self.provider
-        if self.model:
-            provider_text = f"{provider_text} / {self.model}"
+        model = _agent_provider_display_model(self.provider, self.model)
+        if model:
+            provider_text = f"{provider_text} / {model}"
         if self.fallback:
             provider_text = f"{provider_text} fallback"
         return f"{self.role}: {provider_text}"
@@ -81,7 +82,7 @@ def build_agent_provider_panel_status(env: Mapping[str, str] | None = None) -> A
     roles = [_agent_provider_role_status(role, env=env) for role in AGENT_PROVIDER_ROLES]
     answer = roles[0]
     summary_provider = answer.provider
-    summary_model = answer.model
+    summary_model = _agent_provider_display_model(answer.provider, answer.model)
     summary = f"agent: {summary_provider}"
     if summary_model:
         summary = f"{summary} / {summary_model}"
@@ -105,6 +106,14 @@ def _agent_provider_role_status(role: str, *, env: Mapping[str, str] | None = No
     if role not in supported_roles:
         return AgentProviderRoleStatus(role=role, provider=PROVIDER_RULE_BASED, fallback=True)
     return AgentProviderRoleStatus(role=role, provider=config.provider, model=config.model)
+
+
+def _agent_provider_display_model(provider: str, model: str) -> str:
+    if model:
+        return model
+    if provider == PROVIDER_CODEX:
+        return "default"
+    return ""
 
 
 class DirectAdapterAgentFallback:

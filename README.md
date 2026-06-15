@@ -40,7 +40,7 @@ Python 3.11 이상을 권장합니다.
 python -m pip install -r requirements.txt
 ```
 
-Codex provider를 사용할 경우 `.env.example`을 `.env`로 복사해 로컬 CLI 환경에 맞게 조정합니다. `.env`가 없어도 `rule_based` fallback은 동작합니다.
+처음 실행할 때 `.env`는 선택 사항입니다. 별도 설정이 없으면 앱은 사용 가능한 CLI provider를 `codex` -> `gemini` -> `rule_based` 순서로 자동 탐지합니다. 고급 사용자는 `.env.example`을 `.env`로 복사해 provider, model, command를 직접 override할 수 있습니다.
 
 ```powershell
 Copy-Item .env.example .env
@@ -192,7 +192,7 @@ GUI는 browser UI가 아니라 PySide6 기반 3분할 데스크톱 앱입니다.
 
 ## Agent Provider 구조
 
-현재 우선 지원 provider는 Codex CLI입니다. OpenAI API key 입력 UI를 만들지 않고, 사용자가 이미 로그인해 둔 로컬 Codex CLI 세션을 subprocess로 호출합니다.
+현재 우선 지원 provider는 Codex CLI입니다. `.env`가 없어도 실행 시 로컬 CLI를 자동 탐지하며, Codex CLI가 사용 가능하면 Codex를 먼저 사용하고 Codex가 없으면 Gemini CLI를 시도한 뒤 둘 다 없으면 `rule_based` fallback을 사용합니다. OpenAI API key 입력 UI를 만들지 않고, 사용자가 이미 로그인해 둔 로컬 CLI 세션을 subprocess로 호출합니다.
 
 - `codex`: answer, ingest, concept, review role에 연결되어 있습니다.
 - `gemini`: answer, ingest, concept, review role에 연결되어 있습니다.
@@ -216,10 +216,10 @@ LLM_WIKI_GEMINI_COMMAND=gemini
 
 - `LLM_WIKI_AGENT_PROVIDER`: 전역 provider입니다. 예: `codex`, `gemini`, `rule_based`
 - `LLM_WIKI_ANSWER_PROVIDER`, `LLM_WIKI_INGEST_PROVIDER`, `LLM_WIKI_CONCEPT_PROVIDER`, `LLM_WIKI_REVIEW_PROVIDER`: role별 provider override입니다.
-- `LLM_WIKI_AGENT_MODEL`: role별 model이 없을 때 쓰는 기본 model입니다.
+- `LLM_WIKI_AGENT_MODEL`: role별 model이 없을 때 쓰는 기본 model입니다. 설정하지 않으면 Codex는 CLI 기본 모델을 사용하고, Gemini는 `gemini-2.5-flash`를 사용합니다.
 - `LLM_WIKI_ANSWER_MODEL`, `LLM_WIKI_INGEST_MODEL`, `LLM_WIKI_CONCEPT_MODEL`, `LLM_WIKI_REVIEW_MODEL`: role별 model입니다.
-- `LLM_WIKI_CODEX_COMMAND`: Codex CLI command입니다. 기본값은 `codex.cmd`입니다.
-- `LLM_WIKI_GEMINI_COMMAND`: Gemini CLI 감지 및 answer/ingest/concept/review 호출용 command입니다. 기본값은 `gemini`입니다.
+- `LLM_WIKI_CODEX_COMMAND`: Codex CLI command입니다. 설정하지 않으면 Windows wrapper인 `codex.cmd`와 bare command인 `codex`를 순서대로 탐지합니다.
+- `LLM_WIKI_GEMINI_COMMAND`: Gemini CLI 감지 및 answer/ingest/concept/review 호출용 command입니다. 설정하지 않으면 Windows wrapper인 `gemini.cmd`와 bare command인 `gemini`를 순서대로 탐지합니다.
 
 이미 OS 환경 변수에 값이 있으면 `.env` 값은 덮어쓰지 않습니다.
 

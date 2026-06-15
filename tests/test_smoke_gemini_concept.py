@@ -200,6 +200,14 @@ class SmokeGeminiConceptTests(unittest.TestCase):
         self.assertIn("fallback: false", rendered)
         self.assertIn("lint ok: true", rendered)
 
+    def test_environment_summary_uses_gemini_default_model_without_model_env(self):
+        smoke = load_smoke_module()
+
+        summary = smoke.summarize_environment({"LLM_WIKI_CONCEPT_PROVIDER": "gemini"})
+
+        self.assertEqual(summary["resolved_concept_provider"], "gemini")
+        self.assertEqual(summary["resolved_concept_model"], "gemini-2.5-flash")
+
     def test_invalid_gemini_concept_draft_fails_smoke(self):
         smoke = load_smoke_module()
         diagnostic = smoke.CliDiagnostic("gemini", "gemini", True, True, "usable")
