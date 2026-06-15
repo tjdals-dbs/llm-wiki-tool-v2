@@ -113,23 +113,68 @@ class SmokeGeminiIngestTests(unittest.TestCase):
         self.assertEqual(classification.exit_code, 1)
         self.assertIn("forced gemini ingest provider fell back", classification.reason)
 
-    def test_auto_mode_fallback_can_pass_when_outputs_are_valid(self):
+    def test_default_main_forces_gemini_over_codex_env_and_restores_provider(self):
         smoke = load_smoke_module()
-        diagnostic = smoke.CliDiagnostic("gemini", "gemini", False, False, "missing")
+        captured_provider = []
+
+        smoke.load_environment_for_smoke = lambda: {"exists": True, "loaded": True, "loaded_keys": ["LLM_WIKI_AGENT_PROVIDER"]}
+        smoke.collect_gemini_cli_diagnostic = lambda env: smoke.CliDiagnostic("gemini", "gemini", True, True, "usable")
+
+        def fake_run_ingest_smoke():
+            captured_provider.append(os.environ.get("LLM_WIKI_INGEST_PROVIDER"))
+            return {
+                "resolved_ingest_provider": os.environ.get("LLM_WIKI_INGEST_PROVIDER"),
+                "resolved_ingest_model": os.environ.get("LLM_WIKI_INGEST_MODEL", ""),
+                "source_summary_status": "ok",
+                "fallback": False,
+                "generated_source_page_path": "wiki/sources/gemini-ingest-smoke.md",
+                "raw_unchanged": True,
+                "source_schema_ok": True,
+                "source_quality_ok": True,
+                "lint_ok": True,
+                "lint_issues_count": 0,
+            }
+
+        smoke.run_ingest_smoke = fake_run_ingest_smoke
+
+        with patch.dict(
+            os.environ,
+            {
+                "LLM_WIKI_AGENT_PROVIDER": "codex",
+                "LLM_WIKI_INGEST_PROVIDER": "codex",
+                "LLM_WIKI_INGEST_MODEL": "gemini-test",
+            },
+            clear=True,
+        ):
+            output = StringIO()
+            with redirect_stdout(output):
+                exit_code = smoke.main([])
+            restored_provider = os.environ.get("LLM_WIKI_INGEST_PROVIDER")
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(captured_provider, ["gemini"])
+        self.assertEqual(restored_provider, "codex")
+        self.assertIn("resolved ingest provider: gemini", output.getvalue())
+
+    def test_gemini_cli_missing_fails_with_clear_message(self):
+        smoke = load_smoke_module()
+        diagnostic = smoke.CliDiagnostic("gemini", "gemini", False, False, "version command failed: missing")
         result = {
-            "resolved_ingest_provider": "rule_based",
-            "fallback": False,
-            "source_summary_status": "ok",
+            "resolved_ingest_provider": "gemini",
+            "fallback": True,
+            "source_summary_status": "fallback",
             "raw_unchanged": True,
             "source_schema_ok": True,
             "source_quality_ok": True,
             "lint_ok": True,
+            "fallback_reason": "Gemini CLI command not found",
         }
 
-        classification = smoke.classify_smoke_result(result, diagnostic, forced_provider="")
+        classification = smoke.classify_smoke_result(result, diagnostic, forced_provider="gemini")
 
-        self.assertEqual(classification.label, "PASS")
-        self.assertEqual(classification.exit_code, 0)
+        self.assertEqual(classification.label, "FAIL")
+        self.assertEqual(classification.exit_code, 1)
+        self.assertIn("not usable", classification.reason)
 
     def test_format_output_contains_provider_model_fallback_and_status(self):
         smoke = load_smoke_module()
@@ -184,13 +229,22 @@ class SmokeGeminiIngestTests(unittest.TestCase):
         with patch.dict(os.environ, {}, clear=True):
             output = StringIO()
             with redirect_stdout(output):
-                exit_code = smoke.main(["--provider", "gemini"])
+                exit_code = smoke.main([])
 
         self.assertEqual(exit_code, 1)
         text = output.getvalue()
         self.assertIn("SMOKE RESULT: FAIL", text)
         self.assertIn("Gemini CLI command not found", text)
         self.assertNotIn("Traceback", text)
+
+    def test_provider_auto_option_is_no_longer_accepted(self):
+        smoke = load_smoke_module()
+
+        stderr = StringIO()
+        with self.assertRaises(SystemExit) as raised, redirect_stdout(StringIO()), patch("sys.stderr", stderr):
+            smoke.main(["--provider", "auto"])
+
+        self.assertNotEqual(raised.exception.code, 0)
 
 
 if __name__ == "__main__":

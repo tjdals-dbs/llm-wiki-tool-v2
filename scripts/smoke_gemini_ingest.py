@@ -14,7 +14,6 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from wiki_tool.agent_provider import (  # noqa: E402
-    PROVIDER_CODEX,
     PROVIDER_GEMINI,
     PROVIDER_RULE_BASED,
     detect_gemini_cli,
@@ -31,7 +30,6 @@ ENV_NAMES = [
     "LLM_WIKI_INGEST_PROVIDER",
     "LLM_WIKI_AGENT_MODEL",
     "LLM_WIKI_INGEST_MODEL",
-    "LLM_WIKI_CODEX_COMMAND",
     "LLM_WIKI_GEMINI_COMMAND",
 ]
 
@@ -61,17 +59,16 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Gemini ingest provider smoke runner")
     parser.add_argument(
         "--provider",
-        default="auto",
-        choices=["auto", PROVIDER_CODEX, PROVIDER_GEMINI, PROVIDER_RULE_BASED],
-        help="force the ingest provider for this smoke run",
+        default=PROVIDER_GEMINI,
+        choices=[PROVIDER_GEMINI],
+        help="Gemini ingest provider to diagnose; kept explicit for parity with other smoke runners",
     )
     args = parser.parse_args(argv)
 
-    forced_provider = "" if args.provider == "auto" else args.provider
+    forced_provider = args.provider
     env_load = load_environment_for_smoke()
     previous_provider = os.environ.get("LLM_WIKI_INGEST_PROVIDER")
-    if forced_provider:
-        os.environ["LLM_WIKI_INGEST_PROVIDER"] = forced_provider
+    os.environ["LLM_WIKI_INGEST_PROVIDER"] = PROVIDER_GEMINI
 
     try:
         env_summary = summarize_environment(os.environ, env_load)
@@ -120,11 +117,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"- Reason: {result.get('fallback_reason')}")
         return classification.exit_code
     finally:
-        if forced_provider:
-            if previous_provider is None:
-                os.environ.pop("LLM_WIKI_INGEST_PROVIDER", None)
-            else:
-                os.environ["LLM_WIKI_INGEST_PROVIDER"] = previous_provider
+        _restore_env_value("LLM_WIKI_INGEST_PROVIDER", previous_provider)
 
 
 def load_environment_for_smoke(project_root: Path | None = None) -> dict[str, Any]:
@@ -147,7 +140,6 @@ def summarize_environment(env: Mapping[str, str], env_load: Mapping[str, Any] | 
         "values": {name: env.get(name, "").strip() for name in ENV_NAMES},
         "resolved_ingest_provider": ingest_config.provider,
         "resolved_ingest_model": ingest_config.model,
-        "codex_command_display": _command_display(ingest_config.codex_command),
         "gemini_command_display": _command_display(env.get("LLM_WIKI_GEMINI_COMMAND", "gemini")),
     }
 
@@ -165,8 +157,6 @@ def format_environment_summary(summary: Mapping[str, Any]) -> list[str]:
     values = summary.get("values", {})
     for name in ENV_NAMES:
         state = "set" if variables.get(name) else "empty"
-        if name == "LLM_WIKI_CODEX_COMMAND" and variables.get(name):
-            state += f" ({summary.get('codex_command_display', '')})"
         if name == "LLM_WIKI_GEMINI_COMMAND" and variables.get(name):
             state += f" ({summary.get('gemini_command_display', '')})"
         if name.endswith("_MODEL") and variables.get(name):
@@ -206,48 +196,53 @@ def run_ingest_smoke(
     *,
     adapter_cls: type[Any] = WikiToolAdapter,
 ) -> dict[str, Any]:
-    with tempfile.TemporaryDirectory(prefix="llm_wiki_gemini_ingest_") as tmp:
-        domain_path, raw_path = create_ingest_smoke_domain(Path(tmp))
-        before_hash = _sha256(raw_path)
-        config = load_domain_config(domain_path)
-        provider_config = load_agent_provider_config("ingest")
-        adapter = adapter_cls(config)
+    previous_provider = os.environ.get("LLM_WIKI_INGEST_PROVIDER")
+    os.environ["LLM_WIKI_INGEST_PROVIDER"] = PROVIDER_GEMINI
+    try:
+        with tempfile.TemporaryDirectory(prefix="llm_wiki_gemini_ingest_") as tmp:
+            domain_path, raw_path = create_ingest_smoke_domain(Path(tmp))
+            before_hash = _sha256(raw_path)
+            config = load_domain_config(domain_path)
+            provider_config = load_agent_provider_config("ingest")
+            adapter = adapter_cls(config)
 
-        scan = adapter.scan_raw_sources()
-        summary = adapter.summarize_new_sources()
-        lint = adapter.run_wiki_lint()
-        after_hash = _sha256(raw_path)
+            scan = adapter.scan_raw_sources()
+            summary = adapter.summarize_new_sources()
+            lint = adapter.run_wiki_lint()
+            after_hash = _sha256(raw_path)
 
-        source_pages = sorted((config.wiki_dir / "sources").glob("*.md"))
-        source_page = source_pages[0] if source_pages else None
-        source_text = source_page.read_text(encoding="utf-8") if source_page else ""
-        validation = validate_source_page_draft(source_text) if source_text else {}
-        schema_ok = bool(validation.get("ok", False))
-        quality_ok = _source_quality_ok(source_text)
-        fallback_reason = _metadata_value(source_text, "fallback_reason")
-        gemini_status = _metadata_value(source_text, "codex_status") if "provider: gemini" in source_text else ""
+            source_pages = sorted((config.wiki_dir / "sources").glob("*.md"))
+            source_page = source_pages[0] if source_pages else None
+            source_text = source_page.read_text(encoding="utf-8") if source_page else ""
+            validation = validate_source_page_draft(source_text) if source_text else {}
+            schema_ok = bool(validation.get("ok", False))
+            quality_ok = _source_quality_ok(source_text)
+            fallback_reason = _metadata_value(source_text, "fallback_reason")
+            gemini_status = _metadata_value(source_text, "codex_status") if "provider: gemini" in source_text else ""
 
-        lint_issues = lint.get("issues", []) if isinstance(lint, Mapping) else []
-        return {
-            "resolved_ingest_provider": provider_config.provider,
-            "resolved_ingest_model": provider_config.model,
-            "scan_new_count": _count(scan, "new_count"),
-            "source_summary_status": _summary_status(summary, schema_ok, quality_ok),
-            "fallback": bool(_count(summary, "fallback_count")),
-            "fallback_reason": fallback_reason,
-            "gemini_status": gemini_status,
-            "summarized_count": _count(summary, "summarized_count"),
-            "needs_review_count": _count(summary, "needs_review_count"),
-            "gemini_used_count": _count(summary, "gemini_used_count"),
-            "fallback_count": _count(summary, "fallback_count"),
-            "generated_source_page_path": _relative_to_domain(source_page, config.root) if source_page else "",
-            "generated_source_pages_count": len(source_pages),
-            "raw_unchanged": before_hash == after_hash,
-            "source_schema_ok": schema_ok,
-            "source_quality_ok": quality_ok,
-            "lint_ok": bool(lint.get("ok", False)) if isinstance(lint, Mapping) else False,
-            "lint_issues_count": len(lint_issues),
-        }
+            lint_issues = lint.get("issues", []) if isinstance(lint, Mapping) else []
+            return {
+                "resolved_ingest_provider": provider_config.provider,
+                "resolved_ingest_model": provider_config.model,
+                "scan_new_count": _count(scan, "new_count"),
+                "source_summary_status": _summary_status(summary, schema_ok, quality_ok),
+                "fallback": bool(_count(summary, "fallback_count")),
+                "fallback_reason": fallback_reason,
+                "gemini_status": gemini_status,
+                "summarized_count": _count(summary, "summarized_count"),
+                "needs_review_count": _count(summary, "needs_review_count"),
+                "gemini_used_count": _count(summary, "gemini_used_count"),
+                "fallback_count": _count(summary, "fallback_count"),
+                "generated_source_page_path": _relative_to_domain(source_page, config.root) if source_page else "",
+                "generated_source_pages_count": len(source_pages),
+                "raw_unchanged": before_hash == after_hash,
+                "source_schema_ok": schema_ok,
+                "source_quality_ok": quality_ok,
+                "lint_ok": bool(lint.get("ok", False)) if isinstance(lint, Mapping) else False,
+                "lint_issues_count": len(lint_issues),
+            }
+    finally:
+        _restore_env_value("LLM_WIKI_INGEST_PROVIDER", previous_provider)
 
 
 def create_ingest_smoke_domain(root: Path) -> tuple[Path, Path]:
@@ -337,9 +332,16 @@ def classify_smoke_result(
         return SmokeClassification("FAIL", 1, "generated source page did not include quality metadata")
     if not bool(result.get("lint_ok", False)):
         return SmokeClassification("FAIL", 1, "wiki lint failed in temporary smoke domain")
-    if provider in {PROVIDER_GEMINI, PROVIDER_CODEX, PROVIDER_RULE_BASED} and status == "ok":
+    if provider in {PROVIDER_GEMINI, PROVIDER_RULE_BASED} and status == "ok":
         return SmokeClassification("PASS", 0)
     return SmokeClassification("FAIL", 1, str(result.get("fallback_reason") or status or "unknown failure"))
+
+
+def _restore_env_value(name: str, value: str | None) -> None:
+    if value is None:
+        os.environ.pop(name, None)
+    else:
+        os.environ[name] = value
 
 
 def _summary_status(summary: Mapping[str, Any], schema_ok: bool, quality_ok: bool) -> str:

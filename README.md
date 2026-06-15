@@ -141,10 +141,10 @@ Gemini ingest provider smoke 확인:
 
 ```powershell
 $env:LLM_WIKI_INGEST_PROVIDER="gemini"
-python scripts\smoke_gemini_ingest.py --provider gemini
+python scripts\smoke_gemini_ingest.py
 ```
 
-`--provider gemini`로 ingest provider를 강제했는데 Gemini CLI가 없거나 source summary 생성이 fallback으로 내려가면 smoke runner는 non-zero exit code를 반환합니다. 이 smoke는 임시 public-safe domain을 사용하므로 `examples/finance/wiki` 산출물을 수정하지 않습니다.
+Gemini ingest smoke는 실행 중 `LLM_WIKI_INGEST_PROVIDER=gemini`을 우선 적용합니다. Gemini CLI가 없거나 source summary 생성이 fallback으로 내려가면 non-zero exit code를 반환합니다. 이 smoke는 임시 public-safe domain을 사용하므로 `examples/finance/wiki` 산출물을 수정하지 않습니다.
 
 ## Desktop GUI
 
