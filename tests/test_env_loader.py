@@ -56,12 +56,18 @@ class EnvLoaderTests(unittest.TestCase):
         self.assertIn(".env", gitignore)
         self.assertIn(".env.local", gitignore)
 
-    def test_env_example_documents_codex_provider_settings(self):
+    def test_env_example_documents_optional_provider_overrides(self):
         example = (Path(__file__).resolve().parents[1] / ".env.example").read_text(encoding="utf-8")
 
-        self.assertIn("LLM_WIKI_AGENT_PROVIDER=codex", example)
-        self.assertIn("LLM_WIKI_ANSWER_MODEL=gpt-5.5", example)
-        self.assertIn("LLM_WIKI_CODEX_COMMAND=codex.cmd", example)
+        self.assertIn(".env는 선택 사항", example)
+        self.assertIn("자동 탐지", example)
+        self.assertIn("# LLM_WIKI_AGENT_PROVIDER=codex", example)
+        self.assertIn("# LLM_WIKI_AGENT_PROVIDER=gemini", example)
+        self.assertIn("# LLM_WIKI_GEMINI_COMMAND=gemini.cmd", example)
+        self.assertIn("gemini-2.5-flash", example)
+        self.assertIn("Gemini provider에는 gpt-* 모델명을 사용하지 마세요", example)
+        self.assertNotIn("LLM_WIKI_AGENT_MODEL=gpt-5.5", example)
+        self.assertNotIn("LLM_WIKI_ANSWER_MODEL=gpt-5.5", example)
 
 
 if __name__ == "__main__":

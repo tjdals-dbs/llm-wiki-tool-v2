@@ -40,9 +40,10 @@ Python 3.11 이상을 권장합니다.
 python -m pip install -r requirements.txt
 ```
 
-처음 실행할 때 `.env`는 선택 사항입니다. 별도 설정이 없으면 앱은 사용 가능한 CLI provider를 `codex` -> `gemini` -> `rule_based` 순서로 자동 탐지합니다. 고급 사용자는 `.env.example`을 `.env`로 복사해 provider, model, command를 직접 override할 수 있습니다.
+처음 실행할 때 `.env`는 선택 사항입니다. 별도 설정이 없으면 앱은 사용 가능한 CLI provider를 `codex.cmd` -> `codex` -> `gemini.cmd` -> `gemini` -> `rule_based` 순서로 자동 탐지합니다. 고급 사용자만 `.env.example`을 `.env`로 복사해 provider, model, command를 직접 override하면 됩니다.
 
 ```powershell
+# 필요할 때만 생성
 Copy-Item .env.example .env
 ```
 
@@ -194,22 +195,35 @@ GUI는 browser UI가 아니라 PySide6 기반 3분할 데스크톱 앱입니다.
 
 현재 우선 지원 provider는 Codex CLI입니다. `.env`가 없어도 실행 시 로컬 CLI를 자동 탐지하며, Codex CLI가 사용 가능하면 Codex를 먼저 사용하고 Codex가 없으면 Gemini CLI를 시도한 뒤 둘 다 없으면 `rule_based` fallback을 사용합니다. OpenAI API key 입력 UI를 만들지 않고, 사용자가 이미 로그인해 둔 로컬 CLI 세션을 subprocess로 호출합니다.
 
+자동 탐지 순서:
+
+1. `codex.cmd`
+2. `codex`
+3. `gemini.cmd`
+4. `gemini`
+5. `rule_based` fallback
+
 - `codex`: answer, ingest, concept, review role에 연결되어 있습니다.
 - `gemini`: answer, ingest, concept, review role에 연결되어 있습니다.
 - `rule_based`: 항상 사용 가능한 deterministic fallback입니다.
 - `claude`: 현재 provider 목록에서 제외되어 있습니다.
 
-`.env.example`:
+`.env`는 필수가 아니라 고급 사용자용 override 파일입니다. 필요한 줄만 `.env.example`에서 주석을 풀어 사용하세요.
 
 ```text
-LLM_WIKI_AGENT_PROVIDER=codex
-LLM_WIKI_AGENT_MODEL=gpt-5.5
-LLM_WIKI_ANSWER_MODEL=gpt-5.5
-LLM_WIKI_INGEST_MODEL=gpt-5.5
-LLM_WIKI_CONCEPT_MODEL=gpt-5.5
-LLM_WIKI_REVIEW_MODEL=gpt-5.5
-LLM_WIKI_CODEX_COMMAND=codex.cmd
-LLM_WIKI_GEMINI_COMMAND=gemini
+# Codex를 명시적으로 고정
+# LLM_WIKI_AGENT_PROVIDER=codex
+
+# Gemini를 특정 role에만 사용
+# LLM_WIKI_ANSWER_PROVIDER=gemini
+# LLM_WIKI_INGEST_PROVIDER=gemini
+
+# Windows command override
+# LLM_WIKI_CODEX_COMMAND=codex.cmd
+# LLM_WIKI_GEMINI_COMMAND=gemini.cmd
+
+# Gemini model override 예시
+# LLM_WIKI_ANSWER_MODEL=gemini-2.5-flash
 ```
 
 주요 환경 변수:
@@ -222,6 +236,8 @@ LLM_WIKI_GEMINI_COMMAND=gemini
 - `LLM_WIKI_GEMINI_COMMAND`: Gemini CLI 감지 및 answer/ingest/concept/review 호출용 command입니다. 설정하지 않으면 Windows wrapper인 `gemini.cmd`와 bare command인 `gemini`를 순서대로 탐지합니다.
 
 이미 OS 환경 변수에 값이 있으면 `.env` 값은 덮어쓰지 않습니다.
+
+Codex와 Gemini의 모델명은 서로 호환되지 않습니다. Gemini provider를 사용할 때 `gpt-*` 모델명을 넣지 말고, 기본값인 `gemini-2.5-flash` 또는 Gemini CLI에서 지원하는 모델명을 사용하세요.
 
 Gemini CLI 사용 가능 여부, 인증 방식, 비용과 쿼터는 Google 계정과 Gemini CLI 정책에 따라 달라질 수 있습니다.
 
