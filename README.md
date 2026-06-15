@@ -137,6 +137,15 @@ python scripts\smoke_answer_provider.py --domain examples\finance\domain.yml --q
 
 `--provider gemini`로 answer provider를 강제했는데 Gemini CLI가 없거나 Gemini 호출이 실패해 `rule_based` fallback으로 내려가면 smoke runner는 non-zero exit code를 반환합니다. `--provider auto`에서 fallback이 정상 동작하면 fallback 검증 성공으로 보고 exit code 0을 반환합니다.
 
+Gemini ingest provider smoke 확인:
+
+```powershell
+$env:LLM_WIKI_INGEST_PROVIDER="gemini"
+python scripts\smoke_gemini_ingest.py --provider gemini
+```
+
+`--provider gemini`로 ingest provider를 강제했는데 Gemini CLI가 없거나 source summary 생성이 fallback으로 내려가면 smoke runner는 non-zero exit code를 반환합니다. 이 smoke는 임시 public-safe domain을 사용하므로 `examples/finance/wiki` 산출물을 수정하지 않습니다.
+
 ## Desktop GUI
 
 GUI는 browser UI가 아니라 PySide6 기반 3분할 데스크톱 앱입니다.
