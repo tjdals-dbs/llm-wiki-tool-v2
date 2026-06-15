@@ -180,6 +180,89 @@ class ConceptGraphLintTests(unittest.TestCase):
             self.assertIn("- provider: codex", content)
             self.assertIn("- fallback: false", content)
 
+    def test_gemini_concept_draft_is_used_when_valid(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            domain = load_domain_config(write_domain(root), root=root)
+            raw_file = root / "raw" / "capm.md"
+            raw_file.parent.mkdir()
+            raw_file.write_text("# CAPM\nCAPM links expected return and risk.", encoding="utf-8")
+            scan_raw_sources(domain)
+            summarize_new_sources(domain)
+            gemini_draft = "\n".join(
+                [
+                    "# CAPM",
+                    "",
+                    "## Definition",
+                    "",
+                    "Gemini generated concept definition.",
+                    "",
+                    "## Explanation",
+                    "",
+                    "Gemini concept draft was accepted.",
+                    "",
+                    "## Related Concepts",
+                    "",
+                    "- [Missing Concept](missing.md)",
+                    "",
+                    "## Source Evidence",
+                    "",
+                    "- [capm](../sources/capm.md)",
+                    "- CAPM links expected return and risk.",
+                ]
+            )
+
+            with patch.dict("os.environ", {"LLM_WIKI_AGENT_PROVIDER": "gemini"}, clear=True), patch(
+                "wiki_tool.organizer.draft_concept_update_with_agent"
+            ) as hook:
+                hook.return_value = AgentHookResult(
+                    role="concept",
+                    provider="gemini",
+                    fallback=False,
+                    status="ok",
+                    draft=gemini_draft,
+                )
+                result = organize_pending_sources(domain)
+
+            content = (root / "wiki" / "concepts" / "capm.md").read_text(encoding="utf-8")
+            self.assertEqual(result.provider, "gemini")
+            self.assertEqual(result.fallback_count, 0)
+            self.assertIn("Gemini concept draft was accepted.", content)
+            self.assertNotIn("(missing.md)", content)
+            self.assertIn("Missing Concept", content)
+            self.assertIn("## Agent Metadata", content)
+            self.assertIn("- provider: gemini", content)
+            self.assertIn("- fallback: false", content)
+
+    def test_invalid_gemini_concept_draft_falls_back_to_rule_based_page(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            domain = load_domain_config(write_domain(root), root=root)
+            raw_file = root / "raw" / "capm.md"
+            raw_file.parent.mkdir()
+            raw_file.write_text("# CAPM\nCAPM links expected return and risk.", encoding="utf-8")
+            scan_raw_sources(domain)
+            summarize_new_sources(domain)
+
+            with patch.dict("os.environ", {"LLM_WIKI_AGENT_PROVIDER": "gemini"}, clear=True), patch(
+                "wiki_tool.organizer.draft_concept_update_with_agent"
+            ) as hook:
+                hook.return_value = AgentHookResult(
+                    role="concept",
+                    provider="gemini",
+                    fallback=False,
+                    status="gemini_invalid",
+                    draft="# CAPM\n\n## Definition\n\nNo source evidence.",
+                    error="missing_source_evidence",
+                )
+                result = organize_pending_sources(domain)
+
+            content = (root / "wiki" / "concepts" / "capm.md").read_text(encoding="utf-8")
+            self.assertEqual(result.provider, "gemini")
+            self.assertEqual(result.fallback_count, 1)
+            self.assertIn("## Source Evidence", content)
+            self.assertIn("missing_source_evidence", content)
+
     def test_invalid_codex_concept_draft_falls_back_to_rule_based_page(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

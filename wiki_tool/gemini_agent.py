@@ -6,7 +6,7 @@ import subprocess
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from .agent_prompts import build_ingest_prompt, build_review_prompt
+from .agent_prompts import build_concept_prompt, build_ingest_prompt, build_review_prompt
 from .agent_provider import AgentProviderConfig, DEFAULT_GEMINI_COMMAND
 
 
@@ -85,6 +85,9 @@ class GeminiAgentBridge:
 
     def run_ingest(self, source_text: str) -> GeminiAgentResult:
         return self.run_prompt(build_ingest_prompt(source_text))
+
+    def run_concept(self, source_page: str) -> GeminiAgentResult:
+        return self.run_prompt(build_concept_prompt(source_page))
 
 
 def build_gemini_command(config: AgentProviderConfig, prompt: str) -> list[str]:

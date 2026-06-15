@@ -6,7 +6,7 @@ from pathlib import Path
 from urllib.parse import unquote
 
 from .agent_hooks import AgentHookResult, draft_concept_update_with_agent
-from .agent_provider import PROVIDER_CODEX, PROVIDER_RULE_BASED, load_agent_provider_config
+from .agent_provider import PROVIDER_CODEX, PROVIDER_GEMINI, PROVIDER_RULE_BASED, load_agent_provider_config
 from .concept_filter import clean_candidate_concept, filter_candidate_concepts, is_valid_candidate_concept
 from .config import DomainConfig
 from .manifest import ManifestEntry, read_manifest, write_manifest
@@ -30,8 +30,9 @@ def organize_pending_sources(config: DomainConfig, limit: int | None = None) -> 
     dropped_count = 0
     skipped_count = 0
     provider_config = load_agent_provider_config("concept")
-    provider = provider_config.provider if provider_config.provider == PROVIDER_CODEX else PROVIDER_RULE_BASED
-    unsupported_provider = provider_config.provider not in {PROVIDER_CODEX, PROVIDER_RULE_BASED}
+    agent_providers = {PROVIDER_CODEX, PROVIDER_GEMINI}
+    provider = provider_config.provider if provider_config.provider in agent_providers else PROVIDER_RULE_BASED
+    unsupported_provider = provider_config.provider not in {*agent_providers, PROVIDER_RULE_BASED}
     codex_used_count = 0
     fallback_count = 0
     processed = 0
@@ -69,7 +70,7 @@ def organize_pending_sources(config: DomainConfig, limit: int | None = None) -> 
             )
             hook_result: AgentHookResult | None = None
             validation: dict[str, str | bool] = {"ok": False, "reason": "codex_not_used"}
-            if provider == PROVIDER_CODEX:
+            if provider in agent_providers:
                 hook_result = draft_concept_update_with_agent(
                     _concept_agent_payload(concept_name, source_link, source_page_content)
                 )
@@ -77,10 +78,16 @@ def organize_pending_sources(config: DomainConfig, limit: int | None = None) -> 
             if concept_path.exists():
                 existing = concept_path.read_text(encoding="utf-8")
                 if _can_use_codex_draft(hook_result, validation):
-                    merged = _merge_codex_concept_page(existing, hook_result.draft, source_link, evidence)
+                    merged = _merge_codex_concept_page(
+                        existing,
+                        hook_result.draft,
+                        source_link,
+                        evidence,
+                        provider=hook_result.provider,
+                    )
                     codex_used_count += 1
                 else:
-                    if provider == PROVIDER_CODEX or unsupported_provider:
+                    if provider in agent_providers or unsupported_provider:
                         fallback_count += 1
                     merged = _merge_concept_page(existing, source_link, evidence)
                 if merged != existing:
@@ -91,14 +98,14 @@ def organize_pending_sources(config: DomainConfig, limit: int | None = None) -> 
                 if _can_use_codex_draft(hook_result, validation):
                     concept_page = _with_concept_pipeline_metadata(
                         _normalize_concept_draft_links(hook_result.draft, config, planned_concept_targets),
-                        provider="codex",
+                        provider=hook_result.provider,
                         codex_status=hook_result.status,
                         fallback=False,
                         fallback_reason="",
                     )
                     codex_used_count += 1
                 else:
-                    if provider == PROVIDER_CODEX or unsupported_provider:
+                    if provider in agent_providers or unsupported_provider:
                         fallback_count += 1
                     reason = ""
                     status = ""
@@ -114,7 +121,7 @@ def organize_pending_sources(config: DomainConfig, limit: int | None = None) -> 
                         _render_concept_page(concept_name, source, source_link),
                         provider=provider_config.provider if unsupported_provider else provider,
                         codex_status=status,
-                        fallback=provider == PROVIDER_CODEX or unsupported_provider,
+                        fallback=provider in agent_providers or unsupported_provider,
                         fallback_reason=reason,
                     )
                 concept_path.write_text(concept_page, encoding="utf-8")
@@ -235,7 +242,12 @@ def _can_use_codex_draft(
     hook_result: AgentHookResult | None,
     validation: dict[str, str | bool],
 ) -> bool:
-    return bool(hook_result and hook_result.provider == "codex" and not hook_result.fallback and validation["ok"])
+    return bool(
+        hook_result
+        and hook_result.provider in {PROVIDER_CODEX, PROVIDER_GEMINI}
+        and not hook_result.fallback
+        and validation["ok"]
+    )
 
 
 def _concept_agent_payload(concept_name: str, source_link: str, source_page_content: str) -> str:
@@ -550,7 +562,14 @@ def _merge_concept_page(existing: str, source_link: str, evidence: list[str]) ->
     return existing[:next_heading].rstrip() + "\n" + insertion + existing[next_heading:]
 
 
-def _merge_codex_concept_page(existing: str, draft: str, source_link: str, evidence: list[str]) -> str:
+def _merge_codex_concept_page(
+    existing: str,
+    draft: str,
+    source_link: str,
+    evidence: list[str],
+    *,
+    provider: str = PROVIDER_CODEX,
+) -> str:
     merged = _merge_concept_page(existing, source_link, evidence)
     draft_note = _draft_note_from_concept_page(draft)
     if not draft_note or draft_note in merged:
@@ -564,7 +583,7 @@ def _merge_codex_concept_page(existing: str, draft: str, source_link: str, evide
             "",
             "## Agent Metadata",
             "",
-            "- provider: codex",
+            f"- provider: {provider}",
             "- fallback: false",
             "",
         ]

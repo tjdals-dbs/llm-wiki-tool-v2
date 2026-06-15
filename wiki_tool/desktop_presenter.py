@@ -20,7 +20,7 @@ AGENT_PROVIDER_ROLES = ("answer", "ingest", "concept", "review")
 AGENT_PROVIDER_DETAIL_DEFAULT_VISIBLE = False
 AGENT_PROVIDER_SUPPORTED_ROLES = {
     PROVIDER_CODEX: frozenset(AGENT_PROVIDER_ROLES),
-    PROVIDER_GEMINI: frozenset({"answer", "ingest", "review"}),
+    PROVIDER_GEMINI: frozenset(AGENT_PROVIDER_ROLES),
     PROVIDER_RULE_BASED: frozenset(AGENT_PROVIDER_ROLES),
 }
 
