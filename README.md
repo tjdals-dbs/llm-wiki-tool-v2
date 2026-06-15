@@ -146,6 +146,15 @@ python scripts\smoke_gemini_ingest.py
 
 Gemini ingest smoke는 실행 중 `LLM_WIKI_INGEST_PROVIDER=gemini`을 우선 적용합니다. Gemini CLI가 없거나 source summary 생성이 fallback으로 내려가면 non-zero exit code를 반환합니다. 이 smoke는 임시 public-safe domain을 사용하므로 `examples/finance/wiki` 산출물을 수정하지 않습니다.
 
+Gemini concept provider smoke 확인:
+
+```powershell
+$env:LLM_WIKI_CONCEPT_PROVIDER="gemini"
+python scripts\smoke_gemini_concept.py
+```
+
+Gemini concept smoke는 실행 중 `LLM_WIKI_CONCEPT_PROVIDER=gemini`을 우선 적용하고 source 생성 단계는 deterministic fallback으로 격리합니다. Gemini CLI가 없거나 concept draft가 fallback으로 내려가면 non-zero exit code를 반환합니다. 이 smoke도 임시 public-safe domain을 사용하므로 `examples/finance/wiki` 산출물을 수정하지 않습니다.
+
 ## Desktop GUI
 
 GUI는 browser UI가 아니라 PySide6 기반 3분할 데스크톱 앱입니다.
