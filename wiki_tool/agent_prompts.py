@@ -42,17 +42,18 @@ def build_gemini_answer_prompt(
 ) -> str:
     return "\n".join(
         [
-            "You are the Gemini answer provider for LLM Wiki Tool v2.",
+            "Transform only the supplied wiki context into an answer.",
+            "Do not inspect files, do not describe your plan, and do not ask for another task.",
             "Answer in Korean using only the supplied wiki context and evidence.",
-            "If evidence is insufficient, set status to no_evidence.",
-            "Return exactly one JSON object. Do not use markdown fences or commentary.",
+            "Return exactly one JSON object and nothing else. No markdown fences.",
             'Required JSON fields: "status", "answer", "used_pages", "related_pages", "evidence".',
             'Schema: {"status":"ok","answer":"...","used_pages":[],"related_pages":[],"evidence":[]}',
+            'Use status "no_evidence" if the supplied evidence is insufficient.',
             "",
-            "wiki context:",
+            "context:",
             _context_lines(wiki_context or [], limit=3, text_limit=260),
             "",
-            "wiki evidence:",
+            "evidence:",
             _evidence_lines(evidence or [], limit=2, text_limit=420),
             "",
             f"question: {_truncate(str(question), 300)}",
@@ -63,7 +64,8 @@ def build_gemini_answer_prompt(
 def build_ingest_prompt(source_text: str = "") -> str:
     return "\n".join(
         [
-            "You are the LLM Wiki Tool v2 ingest agent.",
+            "Transform only the supplied raw text into one source summary page.",
+            "Do not inspect files, do not examine the project, do not describe your plan.",
             "raw 파일은 절대 수정, 이동, 삭제하지 마세요.",
             "Never edit, move, delete, or rewrite raw files.",
             "Use only the extracted source text below.",
@@ -107,6 +109,8 @@ def build_ingest_prompt(source_text: str = "") -> str:
 def build_concept_prompt(source_page: str = "") -> str:
     return "\n".join(
         [
+            "Transform only the supplied source page into one concept page draft.",
+            "Do not inspect files, do not examine the project, do not describe your plan.",
             "You are the LLM Wiki Tool v2 Concept Agent.",
             "raw 파일은 절대 수정, 이동, 삭제하지 마세요.",
             "Never edit raw files. Preserve existing human-written concept content.",

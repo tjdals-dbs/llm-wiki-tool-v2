@@ -17,6 +17,7 @@ from .agent_hooks import (
     draft_source_summary_with_agent as hook_draft_source_summary_with_agent,
     review_wiki_changes_with_agent as hook_review_wiki_changes_with_agent,
 )
+from .agent_output import is_readiness_response
 from .agent_provider import PROVIDER_CODEX, PROVIDER_GEMINI, PROVIDER_RULE_BASED, load_agent_provider_config
 from .agent_prompts import build_gemini_answer_prompt
 from .codex_agent import CodexAgentBridge
@@ -443,8 +444,11 @@ def _codex_answer_validation_error(result: Any, local_evidence: list[dict[str, A
 
 
 def _agent_answer_validation_error(payload: dict[str, Any], local_evidence: list[dict[str, Any]]) -> str:
-    if not str(payload.get("answer") or "").strip():
+    answer = str(payload.get("answer") or "").strip()
+    if not answer:
         return "missing_answer"
+    if is_readiness_response(answer):
+        return "readiness_response"
     status = str(payload.get("status") or "")
     if status == "no_evidence":
         return "" if not local_evidence else "ignored_available_evidence"

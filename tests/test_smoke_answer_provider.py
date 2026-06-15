@@ -88,6 +88,57 @@ class SmokeAnswerProviderTests(unittest.TestCase):
         self.assertEqual(classification.exit_code, 1)
         self.assertIn("forced gemini provider fell back", classification.reason)
 
+    def test_forced_gemini_readiness_answer_is_fail_exit_code(self):
+        smoke = load_smoke_module()
+        diagnostics = {
+            "codex": smoke.CliDiagnostic("codex", "codex.cmd", False, False, "missing"),
+            "gemini": smoke.CliDiagnostic("gemini", "gemini", True, True, "usable"),
+        }
+        answer = {
+            "provider": "gemini",
+            "fallback": False,
+            "status": "ok",
+            "answer_preview": "Okay, I'm ready. Please tell me what you'd like me to do.",
+            "used_pages_count": 1,
+            "evidence_count": 1,
+        }
+
+        classification = smoke.classify_smoke_result(
+            answer,
+            diagnostics,
+            forced_provider="gemini",
+            question="CAPM은 무엇인가?",
+        )
+
+        self.assertEqual(classification.label, "FAIL")
+        self.assertEqual(classification.exit_code, 1)
+        self.assertIn("readiness_response", classification.reason)
+
+    def test_forced_gemini_unrelated_answer_is_fail_exit_code(self):
+        smoke = load_smoke_module()
+        diagnostics = {
+            "codex": smoke.CliDiagnostic("codex", "codex.cmd", False, False, "missing"),
+            "gemini": smoke.CliDiagnostic("gemini", "gemini", True, True, "usable"),
+        }
+        answer = {
+            "provider": "gemini",
+            "fallback": False,
+            "status": "ok",
+            "answer_preview": "이 답변은 질문과 무관한 일반 안내입니다.",
+            "used_pages_count": 1,
+            "evidence_count": 1,
+        }
+
+        classification = smoke.classify_smoke_result(
+            answer,
+            diagnostics,
+            forced_provider="gemini",
+            question="CAPM은 무엇인가?",
+        )
+
+        self.assertEqual(classification.label, "FAIL")
+        self.assertIn("answer_not_related_to_question", classification.reason)
+
     def test_auto_mode_fallback_is_zero_exit_code(self):
         smoke = load_smoke_module()
         diagnostics = {

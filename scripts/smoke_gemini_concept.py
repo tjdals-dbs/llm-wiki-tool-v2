@@ -19,6 +19,7 @@ from wiki_tool.agent_provider import (  # noqa: E402
     detect_gemini_cli,
     load_agent_provider_config,
 )
+from wiki_tool.agent_output import is_readiness_response  # noqa: E402
 from wiki_tool.config import load_domain_config  # noqa: E402
 from wiki_tool.env_loader import load_dotenv_if_present  # noqa: E402
 from wiki_tool.mcp_tools import WikiToolAdapter  # noqa: E402
@@ -248,7 +249,7 @@ def run_concept_smoke(
                 "concept_summary_status": concept_status,
                 "fallback": bool(fallback_count),
                 "fallback_reason": fallback_reason,
-                "validation_error": _validation_error(fallback_reason, concept_quality),
+                "validation_error": _validation_error(fallback_reason, concept_quality, raw_output_preview),
                 "raw_output_preview": raw_output_preview,
                 "gemini_status": gemini_status,
                 "promoted_count": _count(organize, "promoted_count"),
@@ -382,7 +383,9 @@ def _concept_status(organize: Mapping[str, Any], quality: Mapping[str, bool], li
     return "ok"
 
 
-def _validation_error(fallback_reason: str, quality: Mapping[str, Any]) -> str:
+def _validation_error(fallback_reason: str, quality: Mapping[str, Any], raw_output_preview: str = "") -> str:
+    if is_readiness_response(raw_output_preview):
+        return "readiness_response"
     if fallback_reason.startswith(("missing_", "empty_draft", "missing_sections:")):
         return fallback_reason
     if not bool(quality.get("concept_schema_ok", False)):

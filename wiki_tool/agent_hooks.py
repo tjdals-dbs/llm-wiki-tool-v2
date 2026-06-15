@@ -104,7 +104,7 @@ def _run_hook(
             provider="rule_based",
             fallback=True,
             status=result.status,
-            draft="",
+            draft=getattr(result, "raw_text", ""),
             error=result.error,
         )
     if config.provider != PROVIDER_CODEX:

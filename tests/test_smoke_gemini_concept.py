@@ -250,6 +250,17 @@ class SmokeGeminiConceptTests(unittest.TestCase):
         self.assertIn("validation_error: missing_reader_facing_explanation", rendered)
         self.assertIn("raw_output_preview: # Concept", rendered)
 
+    def test_readiness_output_is_reported_as_readiness_validation_error(self):
+        smoke = load_smoke_module()
+
+        validation_error = smoke._validation_error(
+            "missing_reader_facing_explanation",
+            {"concept_schema_ok": False, "concept_evidence_ok": False, "provider_metadata_ok": False},
+            "Hello! I've reviewed the directory structure and am ready.",
+        )
+
+        self.assertEqual(validation_error, "readiness_response")
+
     def test_environment_summary_uses_gemini_default_model_without_model_env(self):
         smoke = load_smoke_module()
 

@@ -15,9 +15,23 @@ class GeminiAgentBridgeTests(unittest.TestCase):
             provider_command="gemini-custom",
         )
 
-        command = build_gemini_command(config, "질문")
+        command = build_gemini_command(config)
 
-        self.assertEqual(command, ["gemini-custom", "--skip-trust", "--model", "gemini-model", "-p", "질문"])
+        self.assertEqual(
+            command,
+            [
+                "gemini-custom",
+                "--skip-trust",
+                "--approval-mode",
+                "plan",
+                "--output-format",
+                "json",
+                "--model",
+                "gemini-model",
+                "-p",
+                "Follow the task from stdin. Output only the requested result.",
+            ],
+        )
 
     def test_gemini_command_omits_model_when_not_configured(self):
         config = AgentProviderConfig(
@@ -27,9 +41,31 @@ class GeminiAgentBridgeTests(unittest.TestCase):
             provider_command="gemini",
         )
 
-        command = build_gemini_command(config, "질문")
+        command = build_gemini_command(config)
 
-        self.assertEqual(command, ["gemini", "--skip-trust", "-p", "질문"])
+        self.assertNotIn("--model", command)
+        self.assertIn("--approval-mode", command)
+        self.assertIn("--output-format", command)
+        self.assertEqual(command[-2:], ["-p", "Follow the task from stdin. Output only the requested result."])
+
+    def test_gemini_bridge_passes_prompt_via_stdin_not_command_argument(self):
+        calls = []
+
+        def runner(*args, **kwargs):
+            calls.append((args, kwargs))
+            return subprocess.CompletedProcess(args=args[0], returncode=0, stdout="Gemini answer", stderr="")
+
+        bridge = GeminiAgentBridge(
+            AgentProviderConfig(provider="gemini", model="", codex_command="codex.cmd", provider_command="gemini"),
+            runner=runner,
+        )
+
+        bridge.run_prompt("very long prompt body")
+
+        command = calls[0][0][0]
+        kwargs = calls[0][1]
+        self.assertNotIn("very long prompt body", command)
+        self.assertEqual(kwargs["input"], "very long prompt body")
 
     def test_gemini_bridge_returns_stdout_as_answer_payload(self):
         calls = []
@@ -49,7 +85,25 @@ class GeminiAgentBridgeTests(unittest.TestCase):
         self.assertEqual(result.status, "ok")
         self.assertEqual(result.answer, "Gemini 응답")
         self.assertEqual(result.to_answer_payload()["provider"], "gemini")
-        self.assertEqual(calls[0][0][0], ["gemini", "--skip-trust", "-p", "질문"])
+        self.assertEqual(calls[0][1]["input"], "질문")
+
+    def test_gemini_bridge_extracts_text_from_cli_json_wrapper(self):
+        def runner(*args, **kwargs):
+            stdout = (
+                '{"response":"{\\"status\\":\\"ok\\",\\"answer\\":\\"Wrapped answer\\",'
+                '\\"used_pages\\":[],\\"related_pages\\":[],\\"evidence\\":[]}"}'
+            )
+            return subprocess.CompletedProcess(args=args[0], returncode=0, stdout=stdout, stderr="")
+
+        bridge = GeminiAgentBridge(
+            AgentProviderConfig(provider="gemini", model="", codex_command="codex.cmd", provider_command="gemini"),
+            runner=runner,
+        )
+
+        result = bridge.run_prompt("question")
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.answer, "Wrapped answer")
 
     def test_gemini_bridge_parses_json_answer_payload(self):
         def runner(*args, **kwargs):
@@ -151,7 +205,7 @@ class GeminiAgentBridgeTests(unittest.TestCase):
         calls = []
 
         def runner(*args, **kwargs):
-            calls.append(args[0])
+            calls.append(kwargs["input"])
             return subprocess.CompletedProcess(args=args[0], returncode=0, stdout="- review ok", stderr="")
 
         bridge = GeminiAgentBridge(
@@ -163,14 +217,14 @@ class GeminiAgentBridgeTests(unittest.TestCase):
 
         self.assertTrue(result.ok)
         self.assertEqual(result.answer, "- review ok")
-        self.assertIn("changes summary", calls[0][-1])
-        self.assertIn("source 1, concept 1", calls[0][-1])
+        self.assertIn("changes summary", calls[0])
+        self.assertIn("source 1, concept 1", calls[0])
 
     def test_gemini_bridge_can_run_ingest_prompt(self):
         calls = []
 
         def runner(*args, **kwargs):
-            calls.append(args[0])
+            calls.append(kwargs["input"])
             return subprocess.CompletedProcess(args=args[0], returncode=0, stdout="# Source\n\n## Summary\n\nok", stderr="")
 
         bridge = GeminiAgentBridge(
@@ -182,16 +236,16 @@ class GeminiAgentBridgeTests(unittest.TestCase):
 
         self.assertTrue(result.ok)
         self.assertIn("# Source", result.answer)
-        self.assertIn("raw", calls[0][-1])
-        self.assertIn("## Summary", calls[0][-1])
-        self.assertIn("## Candidate Concept Evidence", calls[0][-1])
-        self.assertIn("raw source text", calls[0][-1])
+        self.assertIn("raw", calls[0])
+        self.assertIn("## Summary", calls[0])
+        self.assertIn("## Candidate Concept Evidence", calls[0])
+        self.assertIn("raw source text", calls[0])
 
     def test_gemini_bridge_can_run_concept_prompt(self):
         calls = []
 
         def runner(*args, **kwargs):
-            calls.append(args[0])
+            calls.append(kwargs["input"])
             return subprocess.CompletedProcess(args=args[0], returncode=0, stdout="# Concept\n\n## Source Evidence\n\n- ok", stderr="")
 
         bridge = GeminiAgentBridge(
@@ -203,9 +257,9 @@ class GeminiAgentBridgeTests(unittest.TestCase):
 
         self.assertTrue(result.ok)
         self.assertIn("# Concept", result.answer)
-        self.assertIn("Concept Agent", calls[0][-1])
-        self.assertIn("## Source Evidence", calls[0][-1])
-        self.assertIn("## Candidate Concepts", calls[0][-1])
+        self.assertIn("Concept Agent", calls[0])
+        self.assertIn("## Source Evidence", calls[0])
+        self.assertIn("## Candidate Concepts", calls[0])
 
     def test_gemini_bridge_handles_empty_stdout_as_graceful_failure(self):
         def runner(*args, **kwargs):

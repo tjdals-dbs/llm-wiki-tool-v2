@@ -19,6 +19,7 @@ from wiki_tool.agent_provider import (  # noqa: E402
     detect_gemini_cli,
     load_agent_provider_config,
 )
+from wiki_tool.agent_output import is_readiness_response  # noqa: E402
 from wiki_tool.config import load_domain_config  # noqa: E402
 from wiki_tool.env_loader import load_dotenv_if_present  # noqa: E402
 from wiki_tool.mcp_tools import WikiToolAdapter  # noqa: E402
@@ -240,7 +241,7 @@ def run_ingest_smoke(
                 "source_summary_status": _summary_status(summary, schema_ok, quality_ok),
                 "fallback": bool(_count(summary, "fallback_count")),
                 "fallback_reason": fallback_reason,
-                "validation_error": _validation_error(fallback_reason, validation),
+                "validation_error": _validation_error(fallback_reason, validation, raw_output_preview),
                 "raw_output_preview": raw_output_preview,
                 "gemini_status": gemini_status,
                 "summarized_count": _count(summary, "summarized_count"),
@@ -372,7 +373,9 @@ def _summary_status(summary: Mapping[str, Any], schema_ok: bool, quality_ok: boo
     return "ok"
 
 
-def _validation_error(fallback_reason: str, validation: Mapping[str, Any]) -> str:
+def _validation_error(fallback_reason: str, validation: Mapping[str, Any], raw_output_preview: str = "") -> str:
+    if is_readiness_response(raw_output_preview):
+        return "readiness_response"
     if fallback_reason.startswith(("missing_", "empty_draft", "missing_sections:")):
         return fallback_reason
     if not bool(validation.get("ok", False)):

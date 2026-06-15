@@ -4,15 +4,17 @@ import json
 import os
 import shlex
 import subprocess
+import tempfile
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from .agent_output import first_code_fence_body, normalize_agent_markdown_draft
+from .agent_output import first_code_fence_body, is_readiness_response, normalize_agent_markdown_draft
 from .agent_prompts import build_concept_prompt, build_ingest_prompt, build_review_prompt
 from .agent_provider import DEFAULT_GEMINI_COMMAND, AgentProviderConfig
 
 
 GEMINI_AGENT_TIMEOUT_SECONDS = 120
+GEMINI_HEADLESS_PROMPT = "Follow the task from stdin. Output only the requested result."
 
 
 @dataclass(frozen=True)
@@ -55,13 +57,14 @@ class GeminiAgentBridge:
         self.timeout_seconds = timeout_seconds
 
     def run_prompt(self, prompt: str) -> GeminiAgentResult:
-        command = build_gemini_command(self.config, prompt)
+        command = build_gemini_command(self.config)
         try:
             completed = (
-                _run_gemini_subprocess(command, self.timeout_seconds)
+                _run_gemini_subprocess(command, prompt, self.timeout_seconds)
                 if self.runner is None
                 else self.runner(
                     command,
+                    input=prompt,
                     text=True,
                     capture_output=True,
                     encoding="utf-8",
@@ -101,31 +104,46 @@ class GeminiAgentBridge:
         return self.run_prompt(build_concept_prompt(source_page))
 
 
-def build_gemini_command(config: AgentProviderConfig, prompt: str) -> list[str]:
+def build_gemini_command(config: AgentProviderConfig) -> list[str]:
     command = shlex.split(config.provider_command or DEFAULT_GEMINI_COMMAND, posix=False)
     if not command:
         command = [DEFAULT_GEMINI_COMMAND]
     args = list(command)
     if "--skip-trust" not in args:
         args.append("--skip-trust")
+    if "--approval-mode" not in args:
+        args.extend(["--approval-mode", "plan"])
+    if "--output-format" not in args and "-o" not in args:
+        args.extend(["--output-format", "json"])
     if config.model:
         args.extend(["--model", config.model])
-    args.extend(["-p", prompt])
+    args.extend(["-p", GEMINI_HEADLESS_PROMPT])
     return args
 
 
-def _run_gemini_subprocess(command: list[str], timeout_seconds: int) -> subprocess.CompletedProcess[str]:
+def _run_gemini_subprocess(command: list[str], prompt: str, timeout_seconds: int) -> subprocess.CompletedProcess[str]:
+    with tempfile.TemporaryDirectory(prefix="llm_wiki_gemini_cli_", ignore_cleanup_errors=True) as cwd:
+        return _run_gemini_subprocess_in_cwd(command, prompt, timeout_seconds, cwd)
+
+
+def _run_gemini_subprocess_in_cwd(
+    command: list[str],
+    prompt: str,
+    timeout_seconds: int,
+    cwd: str,
+) -> subprocess.CompletedProcess[str]:
     process = subprocess.Popen(
         command,
-        stdin=subprocess.DEVNULL,
+        stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
         encoding="utf-8",
         errors="replace",
+        cwd=cwd,
     )
     try:
-        stdout, stderr = process.communicate(timeout=timeout_seconds)
+        stdout, stderr = process.communicate(input=prompt, timeout=timeout_seconds)
     except subprocess.TimeoutExpired as exc:
         _terminate_process_tree(process)
         try:
@@ -160,7 +178,18 @@ def parse_gemini_output(stdout: str) -> GeminiAgentResult:
         fenced_json = first_code_fence_body(raw, languages={"", "json"})
         if fenced_json:
             parsed = _extract_json_object(fenced_json)
+    if parsed is not None and not _looks_like_answer_contract(parsed):
+        nested_text = _extract_text_from_cli_json(parsed)
+        if nested_text and nested_text.strip() != raw:
+            return parse_gemini_output(nested_text)
     if parsed is None:
+        if is_readiness_response(raw):
+            return _failure(
+                "gemini_readiness_response",
+                "Gemini CLI returned an agent readiness response instead of the requested result.",
+                None,
+                raw_text=raw,
+            )
         return GeminiAgentResult(
             ok=True,
             status="ok",
@@ -179,6 +208,24 @@ def parse_gemini_output(stdout: str) -> GeminiAgentResult:
         evidence=_list_of_dicts(parsed.get("evidence")),
         raw_text=raw,
     )
+
+
+def _looks_like_answer_contract(parsed: dict[str, Any]) -> bool:
+    return any(key in parsed for key in ("answer", "used_pages", "related_pages", "evidence", "status"))
+
+
+def _extract_text_from_cli_json(parsed: dict[str, Any]) -> str:
+    for key in ("response", "text", "content", "output", "message"):
+        value = parsed.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    for key in ("result", "data"):
+        value = parsed.get(key)
+        if isinstance(value, dict):
+            nested = _extract_text_from_cli_json(value)
+            if nested:
+                return nested
+    return ""
 
 
 def _extract_json_object(raw: str) -> dict[str, Any] | None:

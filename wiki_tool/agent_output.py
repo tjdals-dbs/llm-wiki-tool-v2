@@ -4,6 +4,15 @@ import re
 
 
 _FENCE_PATTERN = re.compile(r"```([A-Za-z0-9_-]*)\s*\n(.*?)\n```", flags=re.DOTALL)
+_READINESS_PATTERNS = (
+    r"\bokay,\s*i[' ]?m ready\b",
+    r"\bplease tell me what you'?d like me to do\b",
+    r"\bi'?ve reviewed the directory\b",
+    r"\bi have reviewed the directory\b",
+    r"\bi will start by examining\b",
+    r"\bexamining prd\.md\b",
+    r"\breviewed the directory structure\b",
+)
 
 
 def first_code_fence_body(text: str, *, languages: set[str] | None = None) -> str:
@@ -38,3 +47,8 @@ def preview_text(text: str, *, limit: int = 800) -> str:
     if len(flattened) <= limit:
         return flattened
     return flattened[: max(0, limit - 3)].rstrip() + "..."
+
+
+def is_readiness_response(text: str) -> bool:
+    normalized = preview_text(text, limit=2000).casefold()
+    return any(re.search(pattern, normalized, flags=re.IGNORECASE) for pattern in _READINESS_PATTERNS)

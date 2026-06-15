@@ -250,6 +250,17 @@ class SmokeGeminiIngestTests(unittest.TestCase):
         self.assertIn("validation_error: missing_title", rendered)
         self.assertIn("raw_output_preview: # no title draft preview", rendered)
 
+    def test_readiness_output_is_reported_as_readiness_validation_error(self):
+        smoke = load_smoke_module()
+
+        validation_error = smoke._validation_error(
+            "missing_title",
+            {"ok": False, "reason": "missing_title"},
+            "I will start by examining prd.md and the project structure.",
+        )
+
+        self.assertEqual(validation_error, "readiness_response")
+
     def test_environment_summary_uses_gemini_default_model_without_model_env(self):
         smoke = load_smoke_module()
 

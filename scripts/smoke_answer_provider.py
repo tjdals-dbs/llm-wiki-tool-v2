@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import re
 from pathlib import Path
 from typing import Any, Mapping, NamedTuple
 
@@ -21,6 +22,7 @@ from wiki_tool.agent_provider import (  # noqa: E402
     detect_agent_providers,
     load_agent_provider_config,
 )
+from wiki_tool.agent_output import is_readiness_response  # noqa: E402
 from wiki_tool.config import load_domain_config  # noqa: E402
 from wiki_tool.env_loader import load_dotenv_if_present  # noqa: E402
 from wiki_tool.mcp_tools import WikiToolAdapter  # noqa: E402
@@ -103,7 +105,12 @@ def main(argv: list[str] | None = None) -> int:
         for line in format_answer_smoke(answer):
             print(f"- {line}")
 
-        classification = classify_smoke_result(answer, diagnostics, forced_provider=forced_provider)
+        classification = classify_smoke_result(
+            answer,
+            diagnostics,
+            forced_provider=forced_provider,
+            question=args.question,
+        )
         print("")
         print(f"SMOKE RESULT: {classification.label}")
         print(f"- Answer provider: {answer.get('provider', '')}")
@@ -289,6 +296,7 @@ def classify_smoke_result(
     diagnostics: Mapping[str, CliDiagnostic],
     *,
     forced_provider: str = "",
+    question: str = "",
 ) -> SmokeClassification:
     forced = (forced_provider or "").strip().casefold()
     provider = str(answer.get("provider") or "").strip().casefold()
@@ -309,6 +317,9 @@ def classify_smoke_result(
                 1,
                 f"forced gemini provider fell back or failed: {answer.get('fallback_reason') or status}",
             )
+        quality_error = _answer_quality_error(answer, question)
+        if quality_error:
+            return SmokeClassification("FAIL", 1, quality_error)
         return SmokeClassification("PASS", 0)
 
     if forced == PROVIDER_CODEX:
@@ -332,6 +343,26 @@ def classify_smoke_result(
     if provider == PROVIDER_RULE_BASED and status in {"ok", "no_evidence"}:
         return SmokeClassification("FALLBACK", 0, "rule_based answer path verified")
     return SmokeClassification("FAIL", 1, str(answer.get("fallback_reason") or status or "unknown failure"))
+
+
+def _answer_quality_error(answer: Mapping[str, Any], question: str = "") -> str:
+    answer_text = str(answer.get("answer") or answer.get("answer_preview") or "")
+    if is_readiness_response(answer_text):
+        return "readiness_response"
+    if int(answer.get("used_pages_count", 0) or 0) <= 0 and int(answer.get("evidence_count", 0) or 0) <= 0:
+        return "missing_used_pages_or_evidence"
+    expected_terms = _expected_answer_terms(question)
+    if expected_terms and not any(term.casefold() in answer_text.casefold() for term in expected_terms):
+        return "answer_not_related_to_question"
+    return ""
+
+
+def _expected_answer_terms(question: str) -> list[str]:
+    normalized = question.casefold()
+    terms = [term for term in re.findall(r"[0-9a-zA-Z가-힣]+", question) if len(term) >= 2]
+    if "capm" in normalized:
+        terms.extend(["CAPM", "기대수익률", "체계적", "베타"])
+    return terms[:8]
 
 
 def _command_display(command: str) -> str:
