@@ -144,6 +144,18 @@ class FakeAdapter:
         self.applied_answer_draft_result = draft_result
         return self.answer_update_result
 
+    def review_wiki_changes_with_agent(self, changes_summary):
+        self.calls.append("review")
+        self.review_changes_summary = changes_summary
+        return {
+            "role": "review",
+            "provider": "gemini",
+            "fallback": False,
+            "status": "ok",
+            "draft": "- review ok",
+            "error": "",
+        }
+
     def answer_question(self, query):
         self.calls.append(("answer", query))
         if self.answer_payload is not None:
@@ -812,7 +824,7 @@ class DesktopGuiTests(unittest.TestCase):
         self.assertIn("concept: codex / gpt-5.5", status.detail_lines)
         self.assertIn("review: codex / gpt-5.5", status.detail_lines)
 
-    def test_agent_provider_status_marks_gemini_answer_only_as_supported(self):
+    def test_agent_provider_status_marks_gemini_answer_and_review_as_supported(self):
         env = {
             "LLM_WIKI_AGENT_PROVIDER": "gemini",
             "LLM_WIKI_AGENT_MODEL": "gemini-pro",
@@ -824,7 +836,7 @@ class DesktopGuiTests(unittest.TestCase):
         self.assertIn("answer: gemini / gemini-pro", status.detail_lines)
         self.assertIn("ingest: rule_based fallback", status.detail_lines)
         self.assertIn("concept: rule_based fallback", status.detail_lines)
-        self.assertIn("review: rule_based fallback", status.detail_lines)
+        self.assertIn("review: gemini / gemini-pro", status.detail_lines)
 
     def test_agent_provider_status_summarizes_rule_based_without_model(self):
         status = build_agent_provider_panel_status(env={"LLM_WIKI_AGENT_PROVIDER": "rule_based"})
@@ -1034,7 +1046,8 @@ class DesktopGuiTests(unittest.TestCase):
         adapter = FakeAdapter()
         presenter = DesktopGuiPresenter(adapter)
 
-        status = presenter.run_maintenance_workflow()
+        with patch.dict("os.environ", {"LLM_WIKI_REVIEW_PROVIDER": "gemini"}, clear=True):
+            status = presenter.run_maintenance_workflow()
 
         self.assertIn("Maintenance Run Report", status)
         self.assertIn("상태: fallback 포함 성공", status)
@@ -1044,6 +1057,7 @@ class DesktopGuiTests(unittest.TestCase):
         self.assertIn("answer candidates: 2개, skipped 1개", status)
         self.assertIn("answer concept drafts: 1개, skipped 1개", status)
         self.assertIn("answer concept updates: applied 1개, skipped 1개", status)
+        self.assertIn("review: provider gemini, status ok, fallback false", status)
         self.assertIn("concept 반영: wiki/answers/capm.md -> wiki/concepts/capm.md", status)
         self.assertIn("skipped reasons: source evidence required 1개", status)
         self.assertIn("source 생성: wiki/sources/chapter-10.md, wiki/sources/chapter-11.md, wiki/sources/chapter-12.md 외 1개", status)
@@ -1059,9 +1073,10 @@ class DesktopGuiTests(unittest.TestCase):
         self.assertIn("concept organize fallback 1개", status)
         self.assertEqual(
             adapter.calls,
-            ["scan", "summarize", "organize", "answers", "answer_drafts", "answer_updates", "graph", "lint"],
+            ["scan", "summarize", "organize", "answers", "answer_drafts", "answer_updates", "review", "graph", "lint"],
         )
         self.assertIs(adapter.applied_answer_draft_result, adapter.answer_draft_result)
+        self.assertIn("source summarized", adapter.review_changes_summary)
 
     def test_maintenance_report_marks_success_when_every_stage_passes(self):
         adapter = FakeAdapter()

@@ -6,6 +6,7 @@ import subprocess
 from dataclasses import dataclass
 from typing import Any, Callable
 
+from .agent_prompts import build_review_prompt
 from .agent_provider import AgentProviderConfig, DEFAULT_GEMINI_COMMAND
 
 
@@ -78,6 +79,9 @@ class GeminiAgentBridge:
         if not raw:
             return _failure("gemini_empty_output", "Gemini CLI가 빈 응답을 반환했습니다.", None, raw_text=stdout)
         return parse_gemini_output(raw)
+
+    def run_review(self, changes_summary: str) -> GeminiAgentResult:
+        return self.run_prompt(build_review_prompt(changes_summary))
 
 
 def build_gemini_command(config: AgentProviderConfig, prompt: str) -> list[str]:

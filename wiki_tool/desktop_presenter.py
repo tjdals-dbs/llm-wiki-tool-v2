@@ -19,7 +19,7 @@ AGENT_PROVIDER_ROLES = ("answer", "ingest", "concept", "review")
 AGENT_PROVIDER_DETAIL_DEFAULT_VISIBLE = False
 AGENT_PROVIDER_SUPPORTED_ROLES = {
     PROVIDER_CODEX: frozenset(AGENT_PROVIDER_ROLES),
-    PROVIDER_GEMINI: frozenset({"answer"}),
+    PROVIDER_GEMINI: frozenset({"answer", "review"}),
     PROVIDER_RULE_BASED: frozenset(AGENT_PROVIDER_ROLES),
 }
 
@@ -229,6 +229,7 @@ class DesktopGuiPresenter:
         answers = self.adapter.analyze_answer_candidates()
         answer_concept_drafts = self.adapter.draft_answer_concept_updates()
         answer_concept_updates = self.adapter.apply_answer_concept_updates(draft_result=answer_concept_drafts)
+        review = _review_changes_if_agent_enabled(self.adapter, summarize, organize, answer_concept_updates)
         graph = self.adapter.get_wiki_graph()
         lint = self.adapter.run_wiki_lint()
         raw_after = _raw_snapshot(self.adapter)
@@ -241,6 +242,7 @@ class DesktopGuiPresenter:
             answers=answers,
             answer_concept_drafts=answer_concept_drafts,
             answer_concept_updates=answer_concept_updates,
+            review=review,
             raw_before=raw_before,
             raw_after=raw_after,
         )
@@ -326,6 +328,61 @@ class DesktopGuiPresenter:
         return AgentAutoSaveResult(f"위키에 답변 저장됨: {path}", refresh_pages=True)
 
 
+def _review_changes_if_agent_enabled(
+    adapter: Any,
+    summarize: dict[str, Any],
+    organize: dict[str, Any],
+    answer_concept_updates: dict[str, Any],
+) -> dict[str, Any]:
+    provider_config = load_agent_provider_config("review")
+    if provider_config.provider not in {PROVIDER_CODEX, PROVIDER_GEMINI}:
+        return {"role": "review", "provider": "rule_based", "fallback": False, "status": "skipped", "draft": "", "error": ""}
+    if _maintenance_change_count(summarize, organize, answer_concept_updates) <= 0:
+        return {"role": "review", "provider": "rule_based", "fallback": False, "status": "skipped", "draft": "", "error": ""}
+    try:
+        return adapter.review_wiki_changes_with_agent(_review_changes_summary(provider_config.provider, summarize, organize, answer_concept_updates))
+    except Exception as exc:
+        return {"role": "review", "provider": "rule_based", "fallback": True, "status": "review_exception", "draft": "", "error": str(exc)}
+
+
+def _maintenance_change_count(
+    summarize: dict[str, Any],
+    organize: dict[str, Any],
+    answer_concept_updates: dict[str, Any],
+) -> int:
+    return sum(
+        int(value or 0)
+        for value in [
+            summarize.get("summarized_count", 0),
+            summarize.get("needs_review_count", 0),
+            organize.get("promoted_count", 0),
+            organize.get("merged_count", 0),
+            answer_concept_updates.get("applied_count", 0),
+        ]
+    )
+
+
+def _review_changes_summary(
+    provider: str,
+    summarize: dict[str, Any],
+    organize: dict[str, Any],
+    answer_concept_updates: dict[str, Any],
+) -> str:
+    return "\n".join(
+        [
+            f"{provider} review provider is checking the wiki maintenance changes.",
+            f"- source summarized: {summarize.get('summarized_count', 0)}",
+            f"- source needs review: {summarize.get('needs_review_count', 0)}",
+            f"- source fallback: {summarize.get('fallback_count', 0)}",
+            f"- concept promoted: {organize.get('promoted_count', 0)}",
+            f"- concept merged: {organize.get('merged_count', 0)}",
+            f"- concept fallback: {organize.get('fallback_count', 0)}",
+            f"- answer concept updates applied: {answer_concept_updates.get('applied_count', 0)}",
+            f"- answer concept updates skipped: {answer_concept_updates.get('skipped_count', 0)}",
+        ]
+    )
+
+
 def _route_result_from_answer(answer: dict[str, Any], *, route: str, question: str = "") -> AgentRouteResult:
     fallback = bool(answer.get("fallback"))
     status = str(answer.get("status") or ("fallback" if fallback else "ok"))
@@ -371,6 +428,7 @@ def format_maintenance_report(
     answers: dict[str, Any] | None = None,
     answer_concept_drafts: dict[str, Any] | None = None,
     answer_concept_updates: dict[str, Any] | None = None,
+    review: dict[str, Any] | None = None,
     raw_before: dict[str, str] | None = None,
     raw_after: dict[str, str] | None = None,
 ) -> str:
@@ -450,6 +508,7 @@ def format_maintenance_report(
         f"answer candidates: {answer_candidate_count}개, skipped {answer_skipped_count}개",
         f"answer concept drafts: {answer_draft_count}개, skipped {answer_draft_skipped_count}개",
         f"answer concept updates: applied {answer_update_count}개, skipped {answer_update_skipped_count}개",
+        *_format_review_status(review),
         *_format_answer_concept_update_details(answer_concept_updates),
         f"refresh: graph {graph_status}, navigation {navigation_status}",
         f"안전성: {raw_integrity}, lint {lint_status}, {fallback_status}",
@@ -481,6 +540,19 @@ def _format_answer_concept_update_details(answer_concept_updates: dict[str, Any]
     lines.extend(_format_limited_items("concept 반영", answer_concept_updates.get("applied_examples") or []))
     lines.extend(_format_reason_summary("skipped reasons", answer_concept_updates.get("skipped_reason_summary") or []))
     return lines
+
+
+def _format_review_status(review: dict[str, Any] | None) -> list[str]:
+    if not review:
+        return []
+    provider = str(review.get("provider") or "rule_based")
+    status = str(review.get("status") or "unknown")
+    fallback = str(bool(review.get("fallback", False))).lower()
+    line = f"review: provider {provider}, status {status}, fallback {fallback}"
+    error = str(review.get("error") or "").strip()
+    if error:
+        line = f"{line}, warning {error}"
+    return [line]
 
 
 def _format_limited_items(label: str, items: list[Any], *, limit: int = 3) -> list[str]:

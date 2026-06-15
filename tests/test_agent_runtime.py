@@ -95,6 +95,34 @@ class AgentRuntimeTests(unittest.TestCase):
             self.assertEqual(result["review"]["status"], "skipped")
             self.assertTrue((root / "wiki" / "concepts" / "capm.md").exists())
 
+    def test_run_maintenance_once_reviews_with_gemini_when_review_provider_is_gemini(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            domain = load_domain_config(write_domain(root), root=root)
+            raw_file = root / "raw" / "capm.md"
+            raw_file.parent.mkdir()
+            raw_file.write_text("# CAPM\nCAPM은 기대수익률과 위험을 연결한다.", encoding="utf-8")
+
+            env = _runtime_subprocess_env()
+            env["LLM_WIKI_REVIEW_PROVIDER"] = "gemini"
+            with patch.dict(os.environ, env), patch("wiki_tool.agent_runtime.review_wiki_changes_with_agent") as review_hook:
+                review_hook.return_value = AgentHookResult(
+                    role="review",
+                    provider="gemini",
+                    fallback=False,
+                    status="ok",
+                    draft="- Gemini review ok",
+                    error="",
+                )
+
+                result = run_maintenance_once(domain)
+
+        review_hook.assert_called_once()
+        changes_summary = review_hook.call_args.args[0]
+        self.assertIn("source summarized", changes_summary)
+        self.assertEqual(result["review"]["provider"], "gemini")
+        self.assertEqual(result["review"]["status"], "ok")
+
     def test_run_maintenance_once_applies_answer_concept_updates(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

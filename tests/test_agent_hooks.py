@@ -6,6 +6,7 @@ from wiki_tool.agent_hooks import (
     review_wiki_changes_with_agent,
 )
 from wiki_tool.codex_agent import CodexAgentResult
+from wiki_tool.gemini_agent import GeminiAgentResult
 
 
 class FakeBridge:
@@ -48,6 +49,37 @@ class FakeBridge:
         )
 
 
+class FakeGeminiBridge:
+    def __init__(self, config):
+        self.config = config
+        self.calls = []
+
+    def run_review(self, payload):
+        self.calls.append(("review", payload))
+        return GeminiAgentResult(
+            ok=True,
+            status="ok",
+            answer="- Gemini review ok",
+            used_pages=[],
+            related_pages=[],
+            evidence=[],
+        )
+
+
+class FailingGeminiBridge(FakeGeminiBridge):
+    def run_review(self, payload):
+        self.calls.append(("review", payload))
+        return GeminiAgentResult(
+            ok=False,
+            status="gemini_timeout",
+            answer="",
+            used_pages=[],
+            related_pages=[],
+            evidence=[],
+            error="Gemini timeout",
+        )
+
+
 class AgentHookTests(unittest.TestCase):
     def test_ingest_hook_uses_rule_based_fallback_without_codex_provider(self):
         result = draft_source_summary_with_agent("raw text", env={})
@@ -64,7 +96,6 @@ class AgentHookTests(unittest.TestCase):
         results = [
             draft_source_summary_with_agent("raw text", env=env, bridge_factory=fail_factory),
             draft_concept_update_with_agent("# Source", env=env, bridge_factory=fail_factory),
-            review_wiki_changes_with_agent("changes", env=env, bridge_factory=fail_factory),
         ]
 
         for result in results:
@@ -72,6 +103,35 @@ class AgentHookTests(unittest.TestCase):
             self.assertTrue(result.fallback)
             self.assertEqual(result.status, "unsupported_provider_fallback")
             self.assertIn("gemini", result.error)
+
+    def test_review_hook_calls_gemini_when_review_provider_is_gemini(self):
+        created = []
+
+        def factory(config):
+            bridge = FakeGeminiBridge(config)
+            created.append(bridge)
+            return bridge
+
+        env = {"LLM_WIKI_REVIEW_PROVIDER": "gemini", "LLM_WIKI_REVIEW_MODEL": "gemini-review"}
+
+        result = review_wiki_changes_with_agent("changes", env=env, gemini_bridge_factory=factory)
+
+        self.assertEqual(result.provider, "gemini")
+        self.assertFalse(result.fallback)
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(result.draft, "- Gemini review ok")
+        self.assertEqual(created[0].config.model, "gemini-review")
+        self.assertEqual(created[0].calls, [("review", "changes")])
+
+    def test_review_hook_falls_back_when_gemini_fails(self):
+        env = {"LLM_WIKI_AGENT_PROVIDER": "gemini"}
+
+        result = review_wiki_changes_with_agent("changes", env=env, gemini_bridge_factory=FailingGeminiBridge)
+
+        self.assertEqual(result.provider, "rule_based")
+        self.assertTrue(result.fallback)
+        self.assertEqual(result.status, "gemini_timeout")
+        self.assertIn("Gemini timeout", result.error)
 
     def test_ingest_and_concept_hooks_call_codex_when_provider_enabled(self):
         created = []

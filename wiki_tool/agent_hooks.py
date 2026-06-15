@@ -3,8 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping
 
-from .agent_provider import PROVIDER_CODEX, PROVIDER_RULE_BASED, load_agent_provider_config
+from .agent_provider import PROVIDER_CODEX, PROVIDER_GEMINI, PROVIDER_RULE_BASED, load_agent_provider_config
 from .codex_agent import CodexAgentBridge, CodexAgentResult
+from .gemini_agent import GeminiAgentBridge
 
 
 @dataclass(frozen=True)
@@ -27,7 +28,7 @@ class AgentHookResult:
         }
 
 
-BridgeFactory = Callable[[Any], CodexAgentBridge]
+BridgeFactory = Callable[[Any], Any]
 
 
 def draft_source_summary_with_agent(
@@ -53,8 +54,15 @@ def review_wiki_changes_with_agent(
     *,
     env: Mapping[str, str] | None = None,
     bridge_factory: BridgeFactory = CodexAgentBridge,
+    gemini_bridge_factory: BridgeFactory = GeminiAgentBridge,
 ) -> AgentHookResult:
-    return _run_hook("review", changes_summary, env=env, bridge_factory=bridge_factory)
+    return _run_hook(
+        "review",
+        changes_summary,
+        env=env,
+        bridge_factory=bridge_factory,
+        gemini_bridge_factory=gemini_bridge_factory,
+    )
 
 
 def _run_hook(
@@ -63,8 +71,28 @@ def _run_hook(
     *,
     env: Mapping[str, str] | None,
     bridge_factory: BridgeFactory,
+    gemini_bridge_factory: BridgeFactory | None = None,
 ) -> AgentHookResult:
     config = load_agent_provider_config(role, env)
+    if config.provider == PROVIDER_GEMINI and role == "review":
+        bridge = (gemini_bridge_factory or GeminiAgentBridge)(config)
+        result = bridge.run_review(payload)
+        if result.ok:
+            return AgentHookResult(
+                role=role,
+                provider="gemini",
+                fallback=False,
+                status=result.status,
+                draft=result.answer,
+            )
+        return AgentHookResult(
+            role=role,
+            provider="rule_based",
+            fallback=True,
+            status=result.status,
+            draft="",
+            error=result.error,
+        )
     if config.provider != PROVIDER_CODEX:
         unsupported = config.provider != PROVIDER_RULE_BASED
         return AgentHookResult(

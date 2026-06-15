@@ -73,6 +73,25 @@ class GeminiAgentBridgeTests(unittest.TestCase):
         self.assertEqual(result.related_pages, [{"path": "wiki/concepts/beta.md"}])
         self.assertEqual(result.evidence, [{"path": "wiki/sources/capm.md", "text": "CAPM evidence"}])
 
+    def test_gemini_bridge_can_run_review_prompt(self):
+        calls = []
+
+        def runner(*args, **kwargs):
+            calls.append(args[0])
+            return subprocess.CompletedProcess(args=args[0], returncode=0, stdout="- review ok", stderr="")
+
+        bridge = GeminiAgentBridge(
+            AgentProviderConfig(provider="gemini", model="", codex_command="codex.cmd", provider_command="gemini"),
+            runner=runner,
+        )
+
+        result = bridge.run_review("source 1, concept 1")
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.answer, "- review ok")
+        self.assertIn("changes summary", calls[0][-1])
+        self.assertIn("source 1, concept 1", calls[0][-1])
+
     def test_gemini_bridge_handles_empty_stdout_as_graceful_failure(self):
         def runner(*args, **kwargs):
             return subprocess.CompletedProcess(args=args[0], returncode=0, stdout="  ", stderr="")
