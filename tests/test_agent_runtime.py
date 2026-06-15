@@ -203,6 +203,53 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertIs(adapter.applied_draft_result, adapter.draft_result)
         self.assertIs(result["answer_concept_drafts"], adapter.draft_result)
 
+    def test_run_maintenance_once_uses_common_review_helper(self):
+        class FakeRuntimeAdapter:
+            def __init__(self, _config):
+                pass
+
+            def scan_raw_sources(self):
+                return {"new_count": 0}
+
+            def summarize_new_sources(self):
+                return {"summarized_count": 1, "needs_review_count": 0}
+
+            def organize_pending_sources(self):
+                return {"promoted_count": 0, "merged_count": 0}
+
+            def analyze_answer_candidates(self):
+                return {"candidate_count": 0, "skipped_count": 0}
+
+            def draft_answer_concept_updates(self):
+                return {"draft_count": 0, "skipped_count": 0}
+
+            def apply_answer_concept_updates(self, draft_result=None):
+                return {"applied_count": 0, "skipped_count": 0}
+
+            def run_wiki_lint(self):
+                return {"ok": True, "issues": []}
+
+        with tempfile.TemporaryDirectory() as tmp, patch(
+            "wiki_tool.agent_runtime.WikiToolAdapter",
+            FakeRuntimeAdapter,
+        ), patch("wiki_tool.agent_runtime.run_maintenance_review") as review_helper:
+            root = Path(tmp)
+            domain = load_domain_config(write_domain(root), root=root)
+            (root / "wiki").mkdir()
+            review_helper.return_value = {
+                "role": "review",
+                "provider": "gemini",
+                "fallback": False,
+                "status": "ok",
+                "draft": "",
+                "error": "",
+            }
+
+            result = run_maintenance_once(domain)
+
+        review_helper.assert_called_once()
+        self.assertEqual(result["review"]["provider"], "gemini")
+
     def test_run_maintenance_once_reviews_codex_pipeline_without_failing_on_review_error(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

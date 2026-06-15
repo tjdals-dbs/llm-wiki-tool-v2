@@ -1078,6 +1078,25 @@ class DesktopGuiTests(unittest.TestCase):
         self.assertIs(adapter.applied_answer_draft_result, adapter.answer_draft_result)
         self.assertIn("source summarized", adapter.review_changes_summary)
 
+    def test_presenter_uses_common_review_helper_for_maintenance_report(self):
+        adapter = FakeAdapter()
+        presenter = DesktopGuiPresenter(adapter)
+
+        with patch("wiki_tool.desktop_presenter.run_maintenance_review") as review_helper:
+            review_helper.return_value = {
+                "role": "review",
+                "provider": "gemini",
+                "fallback": False,
+                "status": "ok",
+                "draft": "",
+                "error": "",
+            }
+
+            status = presenter.run_maintenance_workflow()
+
+        review_helper.assert_called_once()
+        self.assertIn("review: provider gemini, status ok, fallback false", status)
+
     def test_maintenance_report_marks_success_when_every_stage_passes(self):
         adapter = FakeAdapter()
         adapter.scan_raw_sources = lambda: adapter.calls.append("scan") or {

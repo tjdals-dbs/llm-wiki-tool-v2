@@ -12,6 +12,7 @@ from .agent_provider import (
     load_agent_provider_config,
 )
 from .config import DomainConfig
+from .maintenance_review import run_maintenance_review
 from .mcp_registry import create_tool_registry
 
 
@@ -229,7 +230,12 @@ class DesktopGuiPresenter:
         answers = self.adapter.analyze_answer_candidates()
         answer_concept_drafts = self.adapter.draft_answer_concept_updates()
         answer_concept_updates = self.adapter.apply_answer_concept_updates(draft_result=answer_concept_drafts)
-        review = _review_changes_if_agent_enabled(self.adapter, summarize, organize, answer_concept_updates)
+        review = run_maintenance_review(
+            summarize,
+            organize,
+            answer_concept_updates,
+            review_runner=self.adapter.review_wiki_changes_with_agent,
+        )
         graph = self.adapter.get_wiki_graph()
         lint = self.adapter.run_wiki_lint()
         raw_after = _raw_snapshot(self.adapter)
@@ -326,61 +332,6 @@ class DesktopGuiPresenter:
         if saved.get("updated") and not saved.get("created"):
             return AgentAutoSaveResult(f"기존 답변 페이지 업데이트됨: {path}", refresh_pages=True)
         return AgentAutoSaveResult(f"위키에 답변 저장됨: {path}", refresh_pages=True)
-
-
-def _review_changes_if_agent_enabled(
-    adapter: Any,
-    summarize: dict[str, Any],
-    organize: dict[str, Any],
-    answer_concept_updates: dict[str, Any],
-) -> dict[str, Any]:
-    provider_config = load_agent_provider_config("review")
-    if provider_config.provider not in {PROVIDER_CODEX, PROVIDER_GEMINI}:
-        return {"role": "review", "provider": "rule_based", "fallback": False, "status": "skipped", "draft": "", "error": ""}
-    if _maintenance_change_count(summarize, organize, answer_concept_updates) <= 0:
-        return {"role": "review", "provider": "rule_based", "fallback": False, "status": "skipped", "draft": "", "error": ""}
-    try:
-        return adapter.review_wiki_changes_with_agent(_review_changes_summary(provider_config.provider, summarize, organize, answer_concept_updates))
-    except Exception as exc:
-        return {"role": "review", "provider": "rule_based", "fallback": True, "status": "review_exception", "draft": "", "error": str(exc)}
-
-
-def _maintenance_change_count(
-    summarize: dict[str, Any],
-    organize: dict[str, Any],
-    answer_concept_updates: dict[str, Any],
-) -> int:
-    return sum(
-        int(value or 0)
-        for value in [
-            summarize.get("summarized_count", 0),
-            summarize.get("needs_review_count", 0),
-            organize.get("promoted_count", 0),
-            organize.get("merged_count", 0),
-            answer_concept_updates.get("applied_count", 0),
-        ]
-    )
-
-
-def _review_changes_summary(
-    provider: str,
-    summarize: dict[str, Any],
-    organize: dict[str, Any],
-    answer_concept_updates: dict[str, Any],
-) -> str:
-    return "\n".join(
-        [
-            f"{provider} review provider is checking the wiki maintenance changes.",
-            f"- source summarized: {summarize.get('summarized_count', 0)}",
-            f"- source needs review: {summarize.get('needs_review_count', 0)}",
-            f"- source fallback: {summarize.get('fallback_count', 0)}",
-            f"- concept promoted: {organize.get('promoted_count', 0)}",
-            f"- concept merged: {organize.get('merged_count', 0)}",
-            f"- concept fallback: {organize.get('fallback_count', 0)}",
-            f"- answer concept updates applied: {answer_concept_updates.get('applied_count', 0)}",
-            f"- answer concept updates skipped: {answer_concept_updates.get('skipped_count', 0)}",
-        ]
-    )
 
 
 def _route_result_from_answer(answer: dict[str, Any], *, route: str, question: str = "") -> AgentRouteResult:
