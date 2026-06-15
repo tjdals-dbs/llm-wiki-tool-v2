@@ -234,6 +234,7 @@ def run_concept_smoke(
             concept_text = concept_page.read_text(encoding="utf-8") if concept_page else ""
             concept_quality = _concept_quality(concept_text)
             fallback_reason = _metadata_value(concept_text, "fallback_reason")
+            raw_output_preview = _metadata_value(concept_text, "raw_output_preview")
             gemini_status = _metadata_value(concept_text, "codex_status") if "provider: gemini" in concept_text else ""
             lint_issues = lint.get("issues", []) if isinstance(lint, Mapping) else []
 
@@ -247,6 +248,8 @@ def run_concept_smoke(
                 "concept_summary_status": concept_status,
                 "fallback": bool(fallback_count),
                 "fallback_reason": fallback_reason,
+                "validation_error": _validation_error(fallback_reason, concept_quality),
+                "raw_output_preview": raw_output_preview,
                 "gemini_status": gemini_status,
                 "promoted_count": _count(organize, "promoted_count"),
                 "merged_count": _count(organize, "merged_count"),
@@ -304,6 +307,10 @@ def format_concept_smoke(result: Mapping[str, Any]) -> list[str]:
         lines.append(f"gemini_status: {result.get('gemini_status')}")
     if result.get("fallback_reason"):
         lines.append(f"fallback_reason: {result.get('fallback_reason')}")
+    if result.get("validation_error"):
+        lines.append(f"validation_error: {result.get('validation_error')}")
+    if result.get("raw_output_preview"):
+        lines.append(f"raw_output_preview: {result.get('raw_output_preview')}")
     lines.extend(
         [
             f"scan new_count: {result.get('scan_new_count', 0)}",
@@ -373,6 +380,14 @@ def _concept_status(organize: Mapping[str, Any], quality: Mapping[str, bool], li
     if _count(organize, "fallback_count"):
         return "fallback"
     return "ok"
+
+
+def _validation_error(fallback_reason: str, quality: Mapping[str, Any]) -> str:
+    if fallback_reason.startswith(("missing_", "empty_draft", "missing_sections:")):
+        return fallback_reason
+    if not bool(quality.get("concept_schema_ok", False)):
+        return fallback_reason or "concept_schema_invalid"
+    return ""
 
 
 def _concept_quality(concept_text: str) -> dict[str, bool]:

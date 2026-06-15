@@ -191,6 +191,60 @@ class SourceSummarizerTests(unittest.TestCase):
             self.assertIn("- fallback: false", content)
             self.assertEqual(raw_file.read_text(encoding="utf-8"), raw_text)
 
+    def test_gemini_ingest_fenced_markdown_draft_is_used_when_valid(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            domain = load_domain_config(write_domain(root), root=root)
+            raw_file = root / "raw" / "fenced.md"
+            raw_file.parent.mkdir()
+            raw_file.write_text("# Fenced\nThe source discusses JWT.", encoding="utf-8")
+            scan_raw_sources(domain)
+            gemini_draft = "\n".join(
+                [
+                    "```markdown",
+                    "# Fenced Source",
+                    "",
+                    "## Summary",
+                    "",
+                    "A short source summary.",
+                    "",
+                    "## Key Points",
+                    "",
+                    "- JWT is discussed.",
+                    "",
+                    "## Evidence",
+                    "",
+                    "- The source discusses JWT.",
+                    "",
+                    "## Candidate Concepts",
+                    "",
+                    "- JWT",
+                    "",
+                    "## Candidate Concept Evidence",
+                    "",
+                    "- JWT: The source discusses JWT.",
+                    "```",
+                ]
+            )
+
+            with patch.dict("os.environ", {"LLM_WIKI_INGEST_PROVIDER": "gemini"}, clear=True), patch(
+                "wiki_tool.summarizer.draft_source_summary_with_agent"
+            ) as hook:
+                hook.return_value = AgentHookResult(
+                    role="ingest",
+                    provider="gemini",
+                    fallback=False,
+                    status="ok",
+                    draft=gemini_draft,
+                )
+                result = summarize_new_sources(domain)
+
+            content = (root / "wiki" / "sources" / "fenced.md").read_text(encoding="utf-8")
+            self.assertEqual(result.gemini_used_count, 1)
+            self.assertEqual(result.fallback_count, 0)
+            self.assertIn("# Fenced Source", content)
+            self.assertNotIn("```", content)
+
     def test_codex_ingest_candidate_concepts_are_filtered_before_write(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

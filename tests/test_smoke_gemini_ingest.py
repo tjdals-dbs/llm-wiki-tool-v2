@@ -229,6 +229,27 @@ class SmokeGeminiIngestTests(unittest.TestCase):
         self.assertIn("fallback: false", rendered)
         self.assertIn("lint ok: true", rendered)
 
+    def test_format_output_includes_validation_error_and_raw_preview(self):
+        smoke = load_smoke_module()
+        result = {
+            "resolved_ingest_provider": "gemini",
+            "resolved_ingest_model": "gemini-test",
+            "source_summary_status": "fallback",
+            "fallback": True,
+            "fallback_reason": "missing_title",
+            "validation_error": "missing_title",
+            "raw_output_preview": "# no title draft preview",
+            "raw_unchanged": True,
+            "source_schema_ok": False,
+            "source_quality_ok": True,
+            "lint_ok": True,
+        }
+
+        rendered = "\n".join(smoke.format_ingest_smoke(result))
+
+        self.assertIn("validation_error: missing_title", rendered)
+        self.assertIn("raw_output_preview: # no title draft preview", rendered)
+
     def test_environment_summary_uses_gemini_default_model_without_model_env(self):
         smoke = load_smoke_module()
 

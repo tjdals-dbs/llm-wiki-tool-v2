@@ -6,6 +6,7 @@ from pathlib import Path
 from urllib.parse import unquote
 
 from .agent_hooks import AgentHookResult, draft_concept_update_with_agent
+from .agent_output import normalize_agent_markdown_draft, preview_text
 from .agent_provider import PROVIDER_CODEX, PROVIDER_GEMINI, PROVIDER_RULE_BASED, load_agent_provider_config
 from .concept_filter import clean_candidate_concept, filter_candidate_concepts, is_valid_candidate_concept
 from .config import DomainConfig
@@ -69,18 +70,20 @@ def organize_pending_sources(config: DomainConfig, limit: int | None = None) -> 
                 or _concept_page_path(config, concept_name)
             )
             hook_result: AgentHookResult | None = None
+            agent_draft = ""
             validation: dict[str, str | bool] = {"ok": False, "reason": "codex_not_used"}
             if provider in agent_providers:
                 hook_result = draft_concept_update_with_agent(
                     _concept_agent_payload(concept_name, source_link, source_page_content)
                 )
-                validation = validate_concept_page_draft(hook_result.draft)
+                agent_draft = normalize_agent_markdown_draft(hook_result.draft)
+                validation = validate_concept_page_draft(agent_draft)
             if concept_path.exists():
                 existing = concept_path.read_text(encoding="utf-8")
                 if _can_use_codex_draft(hook_result, validation):
                     merged = _merge_codex_concept_page(
                         existing,
-                        hook_result.draft,
+                        agent_draft,
                         source_link,
                         evidence,
                         provider=hook_result.provider,
@@ -97,7 +100,7 @@ def organize_pending_sources(config: DomainConfig, limit: int | None = None) -> 
                 concept_path.parent.mkdir(parents=True, exist_ok=True)
                 if _can_use_codex_draft(hook_result, validation):
                     concept_page = _with_concept_pipeline_metadata(
-                        _normalize_concept_draft_links(hook_result.draft, config, planned_concept_targets),
+                        _normalize_concept_draft_links(agent_draft, config, planned_concept_targets),
                         provider=hook_result.provider,
                         codex_status=hook_result.status,
                         fallback=False,
@@ -123,6 +126,7 @@ def organize_pending_sources(config: DomainConfig, limit: int | None = None) -> 
                         codex_status=status,
                         fallback=provider in agent_providers or unsupported_provider,
                         fallback_reason=reason,
+                        raw_output_preview=preview_text(hook_result.draft) if hook_result and hook_result.draft else "",
                     )
                 concept_path.write_text(concept_page, encoding="utf-8")
                 promoted_count += 1
@@ -332,6 +336,7 @@ def _with_concept_pipeline_metadata(
     codex_status: str,
     fallback: bool,
     fallback_reason: str,
+    raw_output_preview: str = "",
 ) -> str:
     lines = [
         content.rstrip(),
@@ -344,6 +349,8 @@ def _with_concept_pipeline_metadata(
     ]
     if fallback_reason:
         lines.append(f"- fallback_reason: {_truncate(fallback_reason, 180)}")
+    if raw_output_preview:
+        lines.append(f"- raw_output_preview: {_truncate(raw_output_preview, 800)}")
     lines.append("")
     return "\n".join(lines)
 

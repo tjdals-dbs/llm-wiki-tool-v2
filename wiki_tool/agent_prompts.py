@@ -14,15 +14,14 @@ def build_answer_prompt(
 ) -> str:
     return "\n".join(
         [
-            "당신은 LLM Wiki Tool v2의 Codex Answer Agent입니다.",
-            "사용자의 질문에 답하기 위해 wiki evidence만 사용하세요.",
-            "가능한 경우 wiki MCP tools를 사용하세요: " + ", ".join(WIKI_TOOL_NAMES),
-            "아래에 제공된 wiki context와 evidence가 있으면 그것을 우선 근거로 사용하세요.",
-            "근거가 부족하면 추측하지 말고 status를 no_evidence로 반환하세요.",
-            "답변은 자연스러운 한국어로 작성하세요.",
-            "최종 출력은 JSON 객체 하나만 반환하세요. Markdown, code fence, 인사말, 설명문을 출력하지 마세요.",
-            '필수 JSON 필드: "status", "answer", "used_pages", "related_pages", "evidence"',
-            'status는 "ok" 또는 "no_evidence" 중 하나를 사용하세요.',
+            "You are the Codex answer provider for LLM Wiki Tool v2.",
+            "답변은 한국어로 작성하세요.",
+            "Answer in Korean using only the supplied wiki evidence.",
+            "Use wiki MCP tools when useful: " + ", ".join(WIKI_TOOL_NAMES),
+            "If evidence is insufficient, set status to no_evidence.",
+            "Return exactly one JSON object. Do not use markdown fences or commentary.",
+            'Required JSON fields: "status", "answer", "used_pages", "related_pages", "evidence".',
+            'Use status "ok" or "no_evidence".',
             "",
             "wiki context:",
             _context_lines(wiki_context or []),
@@ -30,7 +29,33 @@ def build_answer_prompt(
             "wiki evidence:",
             _evidence_lines(evidence or []),
             "",
-            f"질문: {question}",
+            f"question: {question}",
+        ]
+    )
+
+
+def build_gemini_answer_prompt(
+    question: str,
+    *,
+    wiki_context: list[dict[str, Any]] | None = None,
+    evidence: list[dict[str, Any]] | None = None,
+) -> str:
+    return "\n".join(
+        [
+            "You are the Gemini answer provider for LLM Wiki Tool v2.",
+            "Answer in Korean using only the supplied wiki context and evidence.",
+            "If evidence is insufficient, set status to no_evidence.",
+            "Return exactly one JSON object. Do not use markdown fences or commentary.",
+            'Required JSON fields: "status", "answer", "used_pages", "related_pages", "evidence".',
+            'Schema: {"status":"ok","answer":"...","used_pages":[],"related_pages":[],"evidence":[]}',
+            "",
+            "wiki context:",
+            _context_lines(wiki_context or [], limit=3, text_limit=260),
+            "",
+            "wiki evidence:",
+            _evidence_lines(evidence or [], limit=2, text_limit=420),
+            "",
+            f"question: {_truncate(str(question), 300)}",
         ]
     )
 
@@ -38,21 +63,43 @@ def build_answer_prompt(
 def build_ingest_prompt(source_text: str = "") -> str:
     return "\n".join(
         [
-            "당신은 LLM Wiki Tool v2의 Ingest Agent입니다.",
+            "You are the LLM Wiki Tool v2 ingest agent.",
             "raw 파일은 절대 수정, 이동, 삭제하지 마세요.",
-            "제공된 extracted source text만 바탕으로 한국어 source page draft를 작성하세요.",
-            "최종 출력은 Markdown 문서 하나만 반환하세요. 인사말, 작업 설명, code fence를 출력하지 마세요.",
+            "Never edit, move, delete, or rewrite raw files.",
+            "Use only the extracted source text below.",
+            "Return exactly one Markdown source page draft. No code fences. No preface.",
             "첫 줄은 반드시 '# <짧은 source 제목>' 형식이어야 합니다.",
-            "필수 섹션을 정확한 heading으로 모두 포함하세요:",
+            "The first line must be '# <short source title>'.",
+            "Use this exact section skeleton and keep every heading:",
+            "",
+            "# <short source title>",
+            "",
             "## Summary",
+            "",
+            "<2-4 source-grounded sentences. If weak, explain needs_review here.>",
+            "",
             "## Key Points",
+            "",
+            "- <source-grounded point>",
+            "",
             "## Evidence",
+            "",
+            "- <short quote or faithful paraphrase from the source>",
+            "",
             "## Candidate Concepts",
+            "",
+            "- <short concept name or noun phrase>",
+            "",
             "## Candidate Concept Evidence",
-            "약한 source는 억지로 요약하지 말고 Summary와 Evidence에 needs_review 이유를 명확히 적으세요.",
+            "",
+            "- <concept name>: <source-grounded evidence sentence>",
+            "",
+            "Do not invent candidate concepts without source evidence.",
+            "Candidate concepts must be short nouns, noun phrases, acronyms, or technical terms.",
+            "If the source is too weak, still return the skeleton and state needs_review in Summary/Evidence.",
             "",
             "extracted source text:",
-            source_text,
+            _truncate(source_text, 12000),
         ]
     )
 
@@ -60,23 +107,45 @@ def build_ingest_prompt(source_text: str = "") -> str:
 def build_concept_prompt(source_page: str = "") -> str:
     return "\n".join(
         [
-            "당신은 LLM Wiki Tool v2의 Concept Agent입니다.",
+            "You are the LLM Wiki Tool v2 Concept Agent.",
             "raw 파일은 절대 수정, 이동, 삭제하지 마세요.",
-            "source page를 바탕으로 concept page draft 또는 기존 concept 병합 초안을 작성하세요.",
-            "기존 사람이 작성한 본문을 덮어쓰라는 제안을 하지 마세요.",
-            "최종 출력은 Markdown 문서 하나만 반환하세요. 인사말, 작업 설명, code fence를 출력하지 마세요.",
-            "첫 줄은 반드시 '# <핵심 개념명>' 형식이어야 합니다.",
-            "독자용 설명이 먼저 오도록 다음 섹션을 우선 사용하세요:",
+            "Never edit raw files. Preserve existing human-written concept content.",
+            "Use only the source page context below.",
+            "Return exactly one Markdown concept page draft. No code fences. No preface.",
+            "The first line must be '# <concept name>'.",
+            "Use this exact section skeleton and keep every heading:",
+            "",
+            "# <concept name>",
+            "",
             "## Definition",
+            "",
+            "<one concise reader-facing definition grounded in the source>",
+            "",
             "## Explanation",
+            "",
+            "<plain-language explanation for a wiki reader>",
+            "",
             "## Key Points",
+            "",
+            "- <source-grounded point>",
+            "",
             "## Related Concepts",
+            "",
+            "- <related concept name, or none>",
+            "",
             "## Source Evidence",
+            "",
+            "- <source page link or source-grounded evidence sentence>",
+            "",
             "## Maintenance Notes",
-            "Source Evidence에는 source link 또는 source evidence 문장을 반드시 포함하세요.",
+            "",
+            "- Generated from source summary evidence.",
+            "",
+            "Definition or Explanation must be present and useful to a reader.",
+            "Source Evidence must include a source link or source evidence sentence.",
             "",
             "source page:",
-            source_page,
+            _truncate(source_page, 12000),
         ]
     )
 
@@ -84,11 +153,12 @@ def build_concept_prompt(source_page: str = "") -> str:
 def build_review_prompt(changes_summary: str = "") -> str:
     return "\n".join(
         [
-            "당신은 LLM Wiki Tool v2의 Review Agent입니다.",
+            "You are the LLM Wiki Tool v2 review agent.",
             "raw 파일은 절대 수정, 이동, 삭제하지 마세요.",
-            "생성된 wiki 변경사항을 짧게 검토하세요.",
-            "metadata 과다 노출, 근거 부족, 중복 concept, 깨진 링크, private/raw 자료 노출 위험만 확인하세요.",
-            "최종 출력은 짧은 한국어 Markdown bullet 목록만 반환하세요. 인사말과 긴 설명은 쓰지 마세요.",
+            "Never edit, move, delete, or rewrite raw files.",
+            "Review the generated wiki change summary briefly.",
+            "Check for metadata leaks, weak evidence, duplicate concepts, broken links, and private/raw exposure.",
+            "Return only a concise Korean Markdown bullet list. No preface.",
             "",
             "changes summary:",
             changes_summary,
@@ -96,25 +166,33 @@ def build_review_prompt(changes_summary: str = "") -> str:
     )
 
 
-def _context_lines(items: list[dict[str, Any]]) -> str:
+def _context_lines(items: list[dict[str, Any]], *, limit: int = 5, text_limit: int = 800) -> str:
     if not items:
-        return "- 없음"
+        return "- none"
     lines: list[str] = []
-    for item in items[:5]:
+    for item in items[:limit]:
         lines.append(
             f"- path: {item.get('path', '')}; type: {item.get('type', '')}; "
-            f"title: {item.get('title', '')}; snippet: {item.get('snippet', '')}"
+            f"title: {_truncate(str(item.get('title', '')), 120)}; "
+            f"snippet: {_truncate(str(item.get('snippet', '')), text_limit)}"
         )
     return "\n".join(lines)
 
 
-def _evidence_lines(items: list[dict[str, Any]]) -> str:
+def _evidence_lines(items: list[dict[str, Any]], *, limit: int = 3, text_limit: int = 900) -> str:
     if not items:
-        return "- 없음"
+        return "- none"
     lines: list[str] = []
-    for item in items[:3]:
+    for item in items[:limit]:
         lines.append(
             f"- path: {item.get('path', '')}; type: {item.get('type', '')}; "
-            f"title: {item.get('title', '')}; text: {item.get('text', '')}"
+            f"title: {_truncate(str(item.get('title', '')), 120)}; "
+            f"text: {_truncate(str(item.get('text', '')), text_limit)}"
         )
     return "\n".join(lines)
+
+
+def _truncate(value: str, limit: int) -> str:
+    if len(value) <= limit:
+        return value
+    return value[: max(0, limit - 3)].rstrip() + "..."

@@ -18,7 +18,7 @@ from .agent_hooks import (
     review_wiki_changes_with_agent as hook_review_wiki_changes_with_agent,
 )
 from .agent_provider import PROVIDER_CODEX, PROVIDER_GEMINI, PROVIDER_RULE_BASED, load_agent_provider_config
-from .agent_prompts import build_answer_prompt
+from .agent_prompts import build_gemini_answer_prompt
 from .codex_agent import CodexAgentBridge
 from .config import DomainConfig
 from .gemini_agent import GeminiAgentBridge
@@ -119,7 +119,7 @@ class WikiToolAdapter:
         if provider_config.provider == PROVIDER_GEMINI:
             context = self.ask_wiki_context(query, limit=5)
             evidence = self._collect_answer_evidence(query, context)
-            prompt = build_answer_prompt(query, wiki_context=context, evidence=evidence)
+            prompt = build_gemini_answer_prompt(query, wiki_context=context, evidence=evidence)
             gemini_result = GeminiAgentBridge(provider_config).run_prompt(prompt)
             payload = _gemini_payload_with_local_evidence(gemini_result.to_answer_payload(), context, evidence)
             validation_error = _agent_answer_validation_error(payload, evidence) if gemini_result.ok else ""

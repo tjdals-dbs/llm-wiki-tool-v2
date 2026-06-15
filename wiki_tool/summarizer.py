@@ -6,6 +6,7 @@ from pathlib import Path
 
 from .config import DomainConfig
 from .agent_hooks import AgentHookResult, draft_source_summary_with_agent
+from .agent_output import normalize_agent_markdown_draft, preview_text
 from .agent_provider import PROVIDER_CODEX, PROVIDER_GEMINI, PROVIDER_RULE_BASED, load_agent_provider_config
 from .concept_filter import clean_candidate_concept, filter_candidate_concepts, is_valid_candidate_concept
 from .extractors import ExtractedSource, extract_source
@@ -81,9 +82,10 @@ def summarize_new_sources(config: DomainConfig, limit: int | None = None) -> Sou
         agent_quality = ""
         if provider in agent_providers:
             hook_result = draft_source_summary_with_agent(extracted.text)
-            validation = validate_source_page_draft(hook_result.draft)
+            agent_draft = normalize_agent_markdown_draft(hook_result.draft)
+            validation = validate_source_page_draft(agent_draft)
             if hook_result.provider == provider and not hook_result.fallback and validation["ok"]:
-                draft = _sanitize_candidate_concept_sections(hook_result.draft)
+                draft = _sanitize_candidate_concept_sections(agent_draft)
                 source_content = _with_source_pipeline_metadata(
                     draft,
                     entry,
@@ -107,6 +109,7 @@ def summarize_new_sources(config: DomainConfig, limit: int | None = None) -> Sou
                     codex_status=hook_result.status,
                     fallback=True,
                     fallback_reason=reason,
+                    raw_output_preview=preview_text(hook_result.draft) if hook_result.draft else "",
                 )
         elif unsupported_provider:
             fallback_count += 1
@@ -394,6 +397,7 @@ def _with_source_pipeline_metadata(
     codex_status: str,
     fallback: bool,
     fallback_reason: str,
+    raw_output_preview: str = "",
 ) -> str:
     lines = [content.rstrip()]
     if "## Source Metadata" not in content:
@@ -419,6 +423,8 @@ def _with_source_pipeline_metadata(
     )
     if fallback_reason:
         lines.append(f"- fallback_reason: {_truncate(fallback_reason, 180)}")
+    if raw_output_preview:
+        lines.append(f"- raw_output_preview: {_truncate(raw_output_preview, 800)}")
     lines.append("")
     return "\n".join(lines)
 

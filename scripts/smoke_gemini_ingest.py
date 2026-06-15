@@ -229,6 +229,7 @@ def run_ingest_smoke(
             schema_ok = bool(validation.get("ok", False))
             quality_ok = _source_quality_ok(source_text)
             fallback_reason = _metadata_value(source_text, "fallback_reason")
+            raw_output_preview = _metadata_value(source_text, "raw_output_preview")
             gemini_status = _metadata_value(source_text, "codex_status") if "provider: gemini" in source_text else ""
 
             lint_issues = lint.get("issues", []) if isinstance(lint, Mapping) else []
@@ -239,6 +240,8 @@ def run_ingest_smoke(
                 "source_summary_status": _summary_status(summary, schema_ok, quality_ok),
                 "fallback": bool(_count(summary, "fallback_count")),
                 "fallback_reason": fallback_reason,
+                "validation_error": _validation_error(fallback_reason, validation),
+                "raw_output_preview": raw_output_preview,
                 "gemini_status": gemini_status,
                 "summarized_count": _count(summary, "summarized_count"),
                 "needs_review_count": _count(summary, "needs_review_count"),
@@ -294,6 +297,10 @@ def format_ingest_smoke(result: Mapping[str, Any]) -> list[str]:
         lines.append(f"gemini_status: {result.get('gemini_status')}")
     if result.get("fallback_reason"):
         lines.append(f"fallback_reason: {result.get('fallback_reason')}")
+    if result.get("validation_error"):
+        lines.append(f"validation_error: {result.get('validation_error')}")
+    if result.get("raw_output_preview"):
+        lines.append(f"raw_output_preview: {result.get('raw_output_preview')}")
     lines.extend(
         [
             f"scan new_count: {result.get('scan_new_count', 0)}",
@@ -363,6 +370,14 @@ def _summary_status(summary: Mapping[str, Any], schema_ok: bool, quality_ok: boo
     if _count(summary, "fallback_count"):
         return "fallback"
     return "ok"
+
+
+def _validation_error(fallback_reason: str, validation: Mapping[str, Any]) -> str:
+    if fallback_reason.startswith(("missing_", "empty_draft", "missing_sections:")):
+        return fallback_reason
+    if not bool(validation.get("ok", False)):
+        return str(validation.get("reason", ""))
+    return ""
 
 
 def _source_quality_ok(source_text: str) -> bool:

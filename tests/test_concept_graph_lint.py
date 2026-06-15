@@ -234,6 +234,55 @@ class ConceptGraphLintTests(unittest.TestCase):
             self.assertIn("- provider: gemini", content)
             self.assertIn("- fallback: false", content)
 
+    def test_gemini_concept_fenced_markdown_draft_is_used_when_valid(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            domain = load_domain_config(write_domain(root), root=root)
+            raw_file = root / "raw" / "fenced.md"
+            raw_file.parent.mkdir()
+            raw_file.write_text("# Fenced Concept\nFenced Concept has source evidence.", encoding="utf-8")
+            scan_raw_sources(domain)
+            summarize_new_sources(domain)
+            gemini_draft = "\n".join(
+                [
+                    "```markdown",
+                    "# Fenced Concept",
+                    "",
+                    "## Definition",
+                    "",
+                    "A concept draft with a reader-facing definition.",
+                    "",
+                    "## Explanation",
+                    "",
+                    "The explanation is grounded in the source page.",
+                    "",
+                    "## Source Evidence",
+                    "",
+                    "- [fenced](../sources/fenced.md)",
+                    "- Fenced Concept has source evidence.",
+                    "```",
+                ]
+            )
+
+            with patch.dict("os.environ", {"LLM_WIKI_CONCEPT_PROVIDER": "gemini"}, clear=True), patch(
+                "wiki_tool.organizer.draft_concept_update_with_agent"
+            ) as hook:
+                hook.return_value = AgentHookResult(
+                    role="concept",
+                    provider="gemini",
+                    fallback=False,
+                    status="ok",
+                    draft=gemini_draft,
+                )
+                result = organize_pending_sources(domain)
+
+            content = (root / "wiki" / "concepts" / "fenced-concept.md").read_text(encoding="utf-8")
+            self.assertEqual(result.provider, "gemini")
+            self.assertEqual(result.fallback_count, 0)
+            self.assertIn("# Fenced Concept", content)
+            self.assertIn("reader-facing definition", content)
+            self.assertNotIn("```", content)
+
     def test_invalid_gemini_concept_draft_falls_back_to_rule_based_page(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

@@ -2,6 +2,7 @@ import subprocess
 import unittest
 
 from wiki_tool.agent_provider import AgentProviderConfig
+from wiki_tool.agent_prompts import build_gemini_answer_prompt
 from wiki_tool.gemini_agent import GeminiAgentBridge, build_gemini_command
 
 
@@ -16,7 +17,7 @@ class GeminiAgentBridgeTests(unittest.TestCase):
 
         command = build_gemini_command(config, "질문")
 
-        self.assertEqual(command, ["gemini-custom", "--model", "gemini-model", "-p", "질문"])
+        self.assertEqual(command, ["gemini-custom", "--skip-trust", "--model", "gemini-model", "-p", "질문"])
 
     def test_gemini_command_omits_model_when_not_configured(self):
         config = AgentProviderConfig(
@@ -28,7 +29,7 @@ class GeminiAgentBridgeTests(unittest.TestCase):
 
         command = build_gemini_command(config, "질문")
 
-        self.assertEqual(command, ["gemini", "-p", "질문"])
+        self.assertEqual(command, ["gemini", "--skip-trust", "-p", "질문"])
 
     def test_gemini_bridge_returns_stdout_as_answer_payload(self):
         calls = []
@@ -48,7 +49,7 @@ class GeminiAgentBridgeTests(unittest.TestCase):
         self.assertEqual(result.status, "ok")
         self.assertEqual(result.answer, "Gemini 응답")
         self.assertEqual(result.to_answer_payload()["provider"], "gemini")
-        self.assertEqual(calls[0][0][0], ["gemini", "-p", "질문"])
+        self.assertEqual(calls[0][0][0], ["gemini", "--skip-trust", "-p", "질문"])
 
     def test_gemini_bridge_parses_json_answer_payload(self):
         def runner(*args, **kwargs):
@@ -72,6 +73,79 @@ class GeminiAgentBridgeTests(unittest.TestCase):
         self.assertEqual(result.used_pages, [{"path": "wiki/sources/capm.md", "title": "CAPM"}])
         self.assertEqual(result.related_pages, [{"path": "wiki/concepts/beta.md"}])
         self.assertEqual(result.evidence, [{"path": "wiki/sources/capm.md", "text": "CAPM evidence"}])
+
+    def test_gemini_bridge_parses_fenced_json_answer_payload(self):
+        def runner(*args, **kwargs):
+            stdout = "\n".join(
+                [
+                    "```json",
+                    '{"status":"ok","answer":"Fenced JSON answer",'
+                    '"used_pages":[{"path":"wiki/sources/source.md"}],'
+                    '"related_pages":[],"evidence":[{"path":"wiki/sources/source.md","text":"evidence"}]}',
+                    "```",
+                ]
+            )
+            return subprocess.CompletedProcess(args=args[0], returncode=0, stdout=stdout, stderr="")
+
+        bridge = GeminiAgentBridge(
+            AgentProviderConfig(provider="gemini", model="", codex_command="codex.cmd", provider_command="gemini"),
+            runner=runner,
+        )
+
+        result = bridge.run_prompt("question")
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.answer, "Fenced JSON answer")
+        self.assertEqual(result.used_pages, [{"path": "wiki/sources/source.md"}])
+
+    def test_gemini_bridge_strips_markdown_fence_and_intro_from_draft(self):
+        def runner(*args, **kwargs):
+            stdout = "\n".join(
+                [
+                    "Here is the requested draft:",
+                    "",
+                    "```markdown",
+                    "# Source Title",
+                    "",
+                    "## Summary",
+                    "",
+                    "Source summary.",
+                    "```",
+                ]
+            )
+            return subprocess.CompletedProcess(args=args[0], returncode=0, stdout=stdout, stderr="")
+
+        bridge = GeminiAgentBridge(
+            AgentProviderConfig(provider="gemini", model="", codex_command="codex.cmd", provider_command="gemini"),
+            runner=runner,
+        )
+
+        result = bridge.run_ingest("raw source text")
+
+        self.assertTrue(result.ok)
+        self.assertTrue(result.answer.startswith("# Source Title"))
+        self.assertNotIn("```", result.answer)
+        self.assertNotIn("Here is the requested draft", result.answer)
+
+    def test_gemini_answer_prompt_limits_context_and_evidence(self):
+        long_text = "x" * 2000
+        prompt = build_gemini_answer_prompt(
+            "What is this?",
+            wiki_context=[
+                {"path": f"wiki/sources/{idx}.md", "type": "source", "title": f"Source {idx}", "snippet": long_text}
+                for idx in range(6)
+            ],
+            evidence=[
+                {"path": f"wiki/sources/{idx}.md", "type": "source", "title": f"Evidence {idx}", "text": long_text}
+                for idx in range(5)
+            ],
+        )
+
+        self.assertIn("Return exactly one JSON object", prompt)
+        self.assertIn('"status"', prompt)
+        self.assertIn("wiki/sources/0.md", prompt)
+        self.assertNotIn("wiki/sources/4.md", prompt)
+        self.assertLess(len(prompt), 3500)
 
     def test_gemini_bridge_can_run_review_prompt(self):
         calls = []

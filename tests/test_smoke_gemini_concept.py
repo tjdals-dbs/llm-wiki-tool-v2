@@ -228,6 +228,28 @@ class SmokeGeminiConceptTests(unittest.TestCase):
         self.assertIn("fallback: false", rendered)
         self.assertIn("lint ok: true", rendered)
 
+    def test_format_output_includes_validation_error_and_raw_preview(self):
+        smoke = load_smoke_module()
+        result = {
+            "resolved_concept_provider": "gemini",
+            "resolved_concept_model": "gemini-test",
+            "concept_summary_status": "fallback",
+            "fallback": True,
+            "fallback_reason": "missing_reader_facing_explanation",
+            "validation_error": "missing_reader_facing_explanation",
+            "raw_output_preview": "# Concept\n\n## Source Evidence\n\n- source",
+            "raw_unchanged": True,
+            "concept_schema_ok": False,
+            "concept_evidence_ok": True,
+            "provider_metadata_ok": False,
+            "lint_ok": True,
+        }
+
+        rendered = "\n".join(smoke.format_concept_smoke(result))
+
+        self.assertIn("validation_error: missing_reader_facing_explanation", rendered)
+        self.assertIn("raw_output_preview: # Concept", rendered)
+
     def test_environment_summary_uses_gemini_default_model_without_model_env(self):
         smoke = load_smoke_module()
 
