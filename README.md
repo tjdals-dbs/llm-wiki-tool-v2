@@ -128,6 +128,15 @@ raw -> source -> concept smoke까지 확인하려면:
 python scripts\smoke_codex_provider.py --domain examples\finance\domain.yml --question "CAPM은 무엇인가?" --include-pipeline
 ```
 
+Gemini answer provider smoke 확인:
+
+```powershell
+$env:LLM_WIKI_ANSWER_PROVIDER="gemini"
+python scripts\smoke_answer_provider.py --domain examples\finance\domain.yml --question "CAPM은 무엇인가?" --provider gemini
+```
+
+`--provider gemini`로 answer provider를 강제했는데 Gemini CLI가 없거나 Gemini 호출이 실패해 `rule_based` fallback으로 내려가면 smoke runner는 non-zero exit code를 반환합니다. `--provider auto`에서 fallback이 정상 동작하면 fallback 검증 성공으로 보고 exit code 0을 반환합니다.
+
 ## Desktop GUI
 
 GUI는 browser UI가 아니라 PySide6 기반 3분할 데스크톱 앱입니다.
