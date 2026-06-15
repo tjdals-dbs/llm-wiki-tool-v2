@@ -156,6 +156,15 @@ python scripts\smoke_gemini_concept.py --ignore-dotenv
 
 Gemini concept smoke는 실행 중 `LLM_WIKI_CONCEPT_PROVIDER=gemini`을 우선 적용하고 source 생성 단계는 deterministic fallback으로 격리합니다. Gemini CLI가 없거나 concept draft가 fallback으로 내려가면 non-zero exit code를 반환합니다. 이 smoke도 임시 public-safe domain을 사용하므로 `examples/finance/wiki` 산출물을 수정하지 않습니다.
 
+Gemini model candidate matrix smoke 확인:
+
+```powershell
+python scripts\smoke_gemini_model_matrix.py --ignore-dotenv
+python scripts\smoke_gemini_model_matrix.py --role ingest --model gemini-2.5-flash --model gemini-3-flash-preview --model gemini-3.1-flash-lite-preview --ignore-dotenv
+```
+
+이 matrix smoke는 ingest, concept, answer role에 대해 Gemini model id 후보를 임시 smoke 경로로 검증합니다. 로컬 Gemini CLI가 model list를 제공하지 않는 환경에서는 후보 id를 추측하지 말고 `--model`로 실제 후보를 넘겨 row별 PASS/FAIL을 확인하세요. invalid model id는 해당 row만 FAIL로 표시되고 전체 비교는 계속 진행됩니다.
+
 ## Desktop GUI
 
 GUI는 browser UI가 아니라 PySide6 기반 3분할 데스크톱 앱입니다.
