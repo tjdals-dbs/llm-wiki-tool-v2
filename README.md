@@ -410,3 +410,16 @@ python scripts\smoke_codex_provider.py --domain examples\finance\domain.yml --qu
 아래 이미지는 실제 GUI에서 샘플/개인 도메인의 wiki가 렌더링된 화면 예시입니다. 제출용 public repo에는 민감한 원문 자료를 포함하지 않고, 화면 캡처는 `demo/` 아래에 둡니다.
 
 ![LLM Wiki Tool GUI demo](demo/llm_wiki_demo.png)
+
+## 제출 요건 대응표
+
+| 과제 요건 | 이 repo에서 확인할 위치 |
+| --- | --- |
+| 하네스 | `RULES.md`, `skills/llm-wiki-maintenance/SKILL.md`, `scripts/`, `tests/` |
+| LLM Wiki | `examples/finance/`, `user_domains/`, `wiki_tool/`, `domain.yml`, `raw/`, `wiki/`, `manifests/` 구조 |
+| MCP server / tools | `scripts/run_mcp_server.py`, `wiki_tool/mcp_server.py`, `wiki_tool/mcp_registry.py`, `wiki_tool/mcp_tools.py` |
+| 뷰어 / 시각화 | `scripts/run_app.py`, `run_app.bat`, `run_app.sh`, PySide6 desktop GUI, 중앙 graph viewer |
+| 사용법 문서 | `README.md`의 빠른 실행, Desktop GUI, 실행 방법 상세, MCP Tool 목록, 검증 명령 |
+| demo 화면 | `demo/llm_wiki_demo.png` |
+
+이 프로젝트에서 `tools/`는 별도 디렉터리 이름이 아니라 MCP server와 GUI viewer를 포함한 도구 계층을 의미합니다. 실제 실행 경로는 `scripts/`와 `wiki_tool/` 아래에 정리되어 있습니다.
