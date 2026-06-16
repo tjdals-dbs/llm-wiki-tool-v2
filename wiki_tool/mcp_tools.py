@@ -30,6 +30,9 @@ from .scanner import scan_raw_sources as core_scan_raw_sources
 from .summarizer import summarize_new_sources as core_summarize_new_sources
 
 
+ANSWER_CONTEXT_PAGE_TYPES = {"source", "concept"}
+
+
 class WikiToolAdapter:
     def __init__(self, config: DomainConfig) -> None:
         self.config = config
@@ -50,9 +53,20 @@ class WikiToolAdapter:
         return wiki_path.read_text(encoding="utf-8")
 
     def search_wiki(self, query: str, limit: int = 10) -> list[dict[str, Any]]:
+        return self._search_wiki_pages(query, limit=limit)
+
+    def _search_wiki_pages(
+        self,
+        query: str,
+        *,
+        limit: int = 10,
+        page_types: set[str] | None = None,
+    ) -> list[dict[str, Any]]:
         query_terms = _query_terms(query)
         matches: list[dict[str, Any]] = []
         for page in self.list_wiki_pages():
+            if page_types is not None and page["type"] not in page_types:
+                continue
             content = self.read_wiki_page(page["path"])
             content_lower = content.lower()
             title_lower = page["title"].lower()
@@ -79,12 +93,27 @@ class WikiToolAdapter:
 
     def ask_wiki_context(self, query: str, limit: int = 5) -> list[dict[str, Any]]:
         direct = self.search_wiki(query, limit=limit)
+        return self._expand_context_with_related_pages(direct, limit=limit)
+
+    def _ask_answer_context(self, query: str, limit: int = 5) -> list[dict[str, Any]]:
+        direct = self._search_wiki_pages(query, limit=limit, page_types=ANSWER_CONTEXT_PAGE_TYPES)
+        return self._expand_context_with_related_pages(direct, limit=limit, page_types=ANSWER_CONTEXT_PAGE_TYPES)
+
+    def _expand_context_with_related_pages(
+        self,
+        direct: list[dict[str, Any]],
+        *,
+        limit: int,
+        page_types: set[str] | None = None,
+    ) -> list[dict[str, Any]]:
         seen = {item["path"] for item in direct}
         context = list(direct)
         for item in direct:
             for related in self.get_related_pages(item["path"], depth=1):
                 if len(context) >= limit:
                     return context
+                if page_types is not None and related["type"] not in page_types:
+                    continue
                 if related["path"] in seen:
                     continue
                 seen.add(related["path"])
@@ -103,7 +132,7 @@ class WikiToolAdapter:
     def answer_question(self, query: str) -> dict[str, Any]:
         provider_config = load_agent_provider_config("answer")
         if provider_config.provider == PROVIDER_CODEX:
-            context = self.ask_wiki_context(query, limit=5)
+            context = self._ask_answer_context(query, limit=5)
             evidence = self._collect_answer_evidence(query, context)
             codex_result = CodexAgentBridge(provider_config).run_answer(query, wiki_context=context, evidence=evidence)
             validation_error = _codex_answer_validation_error(codex_result, evidence)
@@ -118,7 +147,7 @@ class WikiToolAdapter:
             fallback["codex_status"] = codex_result.status if not validation_error else "codex_invalid_answer"
             return _answer_with_save_decision(query, fallback)
         if provider_config.provider == PROVIDER_GEMINI:
-            context = self.ask_wiki_context(query, limit=5)
+            context = self._ask_answer_context(query, limit=5)
             evidence = self._collect_answer_evidence(query, context)
             prompt = build_gemini_answer_prompt(query, wiki_context=context, evidence=evidence)
             gemini_result = GeminiAgentBridge(provider_config).run_prompt(prompt)
@@ -154,7 +183,7 @@ class WikiToolAdapter:
         context: list[dict[str, Any]] | None = None,
         evidence: list[dict[str, str]] | None = None,
     ) -> dict[str, Any]:
-        context = context if context is not None else self.ask_wiki_context(query, limit=5)
+        context = context if context is not None else self._ask_answer_context(query, limit=5)
         evidence = evidence if evidence is not None else self._collect_answer_evidence(query, context)
         if not evidence:
             return {
@@ -181,6 +210,8 @@ class WikiToolAdapter:
         query_terms = _query_terms(query)
         collected: list[dict[str, str]] = []
         for page in context:
+            if page["type"] not in ANSWER_CONTEXT_PAGE_TYPES:
+                continue
             content = self.read_wiki_page(page["path"])
             for evidence_text in _extract_page_evidence(content, page["type"], query_terms):
                 collected.append(

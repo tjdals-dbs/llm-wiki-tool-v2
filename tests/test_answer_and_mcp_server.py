@@ -76,6 +76,73 @@ class AnswerAndMcpServerTests(unittest.TestCase):
             self.assertIn("CAPM", answer["evidence"][0]["text"])
             self.assertNotIn("## Used Pages", answer["answer"])
 
+    def test_answer_question_ignores_saved_answers_and_log_as_generation_context(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            adapter = build_adapter(root)
+            adapter.apply_wiki_update(
+                question="CAPM? 臾댁뾿?멸??",
+                answer="CAPM saved answer " * 80,
+                used_pages=[{"path": "wiki/concepts/capm.md"}],
+                related_pages=[],
+                evidence=[{"path": "wiki/concepts/capm.md", "text": "CAPM concept evidence"}],
+                status="ok",
+                suggested_title="CAPM? 臾댁뾿?멸?",
+            )
+            log = root / "wiki" / "log.md"
+            log.write_text(log.read_text(encoding="utf-8") + "\nCAPM log entry " * 80, encoding="utf-8")
+            codex_result = CodexAgentResult(
+                ok=False,
+                status="codex_test_failure",
+                answer="",
+                used_pages=[],
+                related_pages=[],
+                evidence=[],
+                error="stop after context capture",
+            )
+
+            with patch.dict("os.environ", {"LLM_WIKI_AGENT_PROVIDER": "codex"}, clear=True), patch(
+                "wiki_tool.mcp_tools.CodexAgentBridge"
+            ) as bridge_cls:
+                bridge_cls.return_value.run_answer.return_value = codex_result
+                adapter.answer_question("CAPM? 臾댁뾿?멸??")
+
+            call = bridge_cls.return_value.run_answer.call_args
+            context_paths = [item["path"] for item in call.kwargs["wiki_context"]]
+            evidence_paths = [item["path"] for item in call.kwargs["evidence"]]
+            allowed_paths = {"wiki/concepts/capm.md", "wiki/sources/capm.md"}
+            self.assertTrue(context_paths)
+            self.assertTrue(evidence_paths)
+            self.assertTrue(set(context_paths).issubset(allowed_paths))
+            self.assertTrue(set(evidence_paths).issubset(allowed_paths))
+            self.assertNotIn("wiki/log.md", context_paths)
+            self.assertFalse(any(path.startswith("wiki/answers/") for path in context_paths))
+            self.assertFalse(any(path.startswith("wiki/answers/") for path in evidence_paths))
+
+    def test_rule_based_answer_ignores_saved_answer_pages_as_evidence(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            adapter = build_adapter(root)
+            adapter.apply_wiki_update(
+                question="CAPM? 臾댁뾿?멸??",
+                answer="CAPM saved answer " * 80,
+                used_pages=[{"path": "wiki/concepts/capm.md"}],
+                related_pages=[],
+                evidence=[{"path": "wiki/concepts/capm.md", "text": "CAPM concept evidence"}],
+                status="ok",
+                suggested_title="CAPM? 臾댁뾿?멸?",
+            )
+
+            answer = adapter.answer_question("CAPM? 臾댁뾿?멸??")
+
+            self.assertEqual(answer["status"], "ok")
+            self.assertTrue(answer["evidence"])
+            self.assertTrue(
+                {item["path"] for item in answer["evidence"]}.issubset(
+                    {"wiki/concepts/capm.md", "wiki/sources/capm.md"}
+                )
+            )
+
     def test_answer_question_admits_when_evidence_is_missing(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
