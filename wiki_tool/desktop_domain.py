@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
@@ -60,8 +62,18 @@ def open_domain_raw_folder(config: DomainConfig, *, opener: Callable[[str], Any]
     raw_dir = Path(config.raw_dir)
     if not raw_dir.is_dir():
         return RawFolderOpenResult(ok=False, message=f"raw 폴더가 없습니다: {raw_dir}", path=raw_dir)
-    open_folder = opener or getattr(os, "startfile", None)
+    open_folder = opener or _default_folder_opener()
     if open_folder is None:
         return RawFolderOpenResult(ok=False, message="이 환경에서는 raw 폴더를 열 수 없습니다.", path=raw_dir)
     open_folder(str(raw_dir))
     return RawFolderOpenResult(ok=True, message=f"raw 폴더를 열었습니다: {raw_dir}", path=raw_dir)
+
+
+def _default_folder_opener() -> Callable[[str], Any] | None:
+    if sys.platform.startswith("win"):
+        return getattr(os, "startfile", None)
+    if sys.platform == "darwin":
+        return lambda path: subprocess.Popen(["open", path])
+    if os.name == "posix":
+        return lambda path: subprocess.Popen(["xdg-open", path])
+    return None

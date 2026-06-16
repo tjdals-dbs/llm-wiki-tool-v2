@@ -46,7 +46,7 @@ LLM Wiki Tool v2는 사용자가 직접 만든 지식 도메인의 자료를 Mar
 
 ```bash
 git clone <repository-url>
-cd llm_wiki_v2
+cd llm-wiki-tool-v2
 ```
 
 ### Windows
@@ -64,7 +64,7 @@ chmod +x setup.sh run_app.sh
 ./run_app.sh
 ```
 
-GUI가 열리면 왼쪽 상단에서 도메인을 선택하거나 `새 도메인`을 눌러 개인 도메인을 만듭니다. Windows에서는 `raw 폴더 열기`로 현재 도메인의 raw 폴더를 열고 Markdown, PDF, HTML 같은 자료를 넣을 수 있습니다. macOS에서는 Finder를 직접 열어 `user_domains/<slug>/raw/` 폴더에 자료 파일을 복사하세요. 오른쪽 패널의 `위키 업데이트`를 누르고 기다리면 raw scan, source summary, concept organize, graph/index/overview/log 갱신, lint가 한 번에 실행됩니다.
+GUI가 열리면 왼쪽 상단에서 도메인을 선택하거나 `새 도메인`을 눌러 개인 도메인을 만듭니다. `raw 폴더 열기`는 Windows에서는 파일 탐색기, macOS에서는 Finder, Linux에서는 기본 파일 관리자로 현재 도메인의 raw 폴더를 엽니다. 여기에 Markdown, PDF, HTML 같은 자료를 넣고 오른쪽 패널의 `위키 업데이트`를 누르면 raw scan, source summary, concept organize, graph/index/overview/log 갱신, lint가 한 번에 실행됩니다.
 
 처리가 끝나면 왼쪽 목록에 `Sources`, `Concepts`, `Wiki Info`가 나타납니다. 중앙 패널에서 문서 본문과 관계 그래프를 확인하고, 오른쪽 Wiki Agent에 질문할 수 있습니다.
 

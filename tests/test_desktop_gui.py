@@ -576,6 +576,52 @@ class DesktopGuiTests(unittest.TestCase):
         self.assertTrue(result.ok)
         self.assertEqual(after, before)
 
+    def test_default_raw_folder_opener_uses_finder_on_macos(self):
+        from wiki_tool import desktop_domain
+
+        calls = []
+
+        with patch.object(desktop_domain.sys, "platform", "darwin"), patch.object(
+            desktop_domain.subprocess,
+            "Popen",
+            lambda command: calls.append(command),
+        ):
+            opener = desktop_domain._default_folder_opener()
+            opener("/tmp/raw")
+
+        self.assertEqual(calls, [["open", "/tmp/raw"]])
+
+    def test_default_raw_folder_opener_uses_explorer_on_windows(self):
+        from wiki_tool import desktop_domain
+
+        calls = []
+
+        with patch.object(desktop_domain.sys, "platform", "win32"), patch.object(
+            desktop_domain.os,
+            "startfile",
+            lambda path: calls.append(path),
+            create=True,
+        ):
+            opener = desktop_domain._default_folder_opener()
+            opener(r"C:\raw")
+
+        self.assertEqual(calls, [r"C:\raw"])
+
+    def test_default_raw_folder_opener_uses_xdg_open_on_linux(self):
+        from wiki_tool import desktop_domain
+
+        calls = []
+
+        with patch.object(desktop_domain.sys, "platform", "linux"), patch.object(desktop_domain.os, "name", "posix"), patch.object(
+            desktop_domain.subprocess,
+            "Popen",
+            lambda command: calls.append(command),
+        ):
+            opener = desktop_domain._default_folder_opener()
+            opener("/tmp/raw")
+
+        self.assertEqual(calls, [["xdg-open", "/tmp/raw"]])
+
     def test_page_navigation_groups_info_concepts_sources_and_logs_in_order(self):
         pages = [
             {"path": "wiki/sources/capm.md", "type": "source", "label": "CAPM Source"},
