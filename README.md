@@ -65,6 +65,31 @@ user_domains/
 PySide6 desktop GUI 실행:
 
 ```powershell
+run_app.bat
+```
+
+macOS/Linux:
+
+```bash
+chmod +x run_app.sh
+./run_app.sh
+```
+
+직접 Python launcher를 실행해 domain을 지정할 수도 있습니다.
+
+```powershell
+python scripts\run_app.py --domain user_domains\finance-private\domain.yml
+```
+
+GUI를 띄우기 전에 domain/provider/PySide6 상태만 확인하려면:
+
+```powershell
+python scripts\run_app.py --check
+```
+
+기존 GUI 진입점도 유지됩니다.
+
+```powershell
 python scripts\run_desktop_gui.py --domain user_domains\finance-private\domain.yml
 ```
 
@@ -97,6 +122,22 @@ MCP server 실행:
 ```powershell
 python scripts\run_mcp_server.py --domain examples\finance\domain.yml --transport stdio
 ```
+
+GUI와 MCP server는 실행 목적이 다릅니다. GUI는 내부 wiki core를 직접 호출하는 데스크톱 클라이언트이고, MCP server는 Codex 같은 외부 agent가 같은 wiki 기능을 tool로 호출하기 위한 stdio server입니다. stdio MCP server는 사용자가 미리 켜두는 상시 서버가 아니라, MCP client에 등록된 command가 필요할 때 실행하는 방식입니다.
+
+Codex MCP client 등록 예시:
+
+```powershell
+codex mcp add llm-wiki -- python scripts\run_mcp_server.py --domain examples\finance\domain.yml --transport stdio
+```
+
+macOS/Linux:
+
+```bash
+codex mcp add llm-wiki -- python3 scripts/run_mcp_server.py --domain examples/finance/domain.yml --transport stdio
+```
+
+완성된 wiki를 포함해 배포받은 사용자는 raw ingest를 다시 실행하지 않아도 MCP server를 통해 읽기, 검색, 질문 tool을 사용할 수 있습니다.
 
 Codex MCP 등록 예시는 사용하는 MCP host 설정 형식에 맞춰 아래 command/args를 넣으면 됩니다.
 
