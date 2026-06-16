@@ -125,7 +125,8 @@ def build_codex_command(
     *,
     output_path: str | None = None,
 ) -> list[str]:
-    command = shlex.split(config.codex_command, posix=False)
+    command_text = config.provider_command or config.codex_command
+    command = shlex.split(command_text, posix=False)
     if not command:
         command = ["codex.cmd"]
     args = [*command, "exec"]

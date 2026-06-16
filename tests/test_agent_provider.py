@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 
 from wiki_tool.agent_provider import (
     DEFAULT_CODEX_COMMAND,
@@ -10,6 +11,7 @@ from wiki_tool.agent_provider import (
     detect_agent_providers,
     load_agent_provider_config,
     resolve_agent_model,
+    resolve_agent_command_candidates,
     resolve_agent_provider,
     resolve_codex_command,
     select_agent_provider,
@@ -96,6 +98,12 @@ class AgentProviderConfigTests(unittest.TestCase):
     def test_codex_command_uses_environment_or_default(self):
         self.assertEqual(resolve_codex_command({}), DEFAULT_CODEX_COMMAND)
         self.assertEqual(resolve_codex_command({"LLM_WIKI_CODEX_COMMAND": "codex"}), "codex")
+
+    def test_command_candidates_are_ordered_for_current_platform(self):
+        with patch("wiki_tool.agent_provider.sys.platform", "darwin"):
+            self.assertEqual(resolve_agent_command_candidates("codex", {}), ("codex", "codex.cmd"))
+        with patch("wiki_tool.agent_provider.sys.platform", "win32"):
+            self.assertEqual(resolve_agent_command_candidates("codex", {}), ("codex.cmd", "codex"))
 
     def test_explicit_provider_environment_wins_over_auto_detection(self):
         env = {"LLM_WIKI_AGENT_PROVIDER": "gemini", "LLM_WIKI_GEMINI_COMMAND": "gemini-custom"}

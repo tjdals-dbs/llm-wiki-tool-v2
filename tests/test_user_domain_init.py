@@ -33,7 +33,7 @@ class UserDomainInitTests(unittest.TestCase):
     def test_creates_user_domain_structure_and_domain_yml(self):
         with tempfile.TemporaryDirectory() as tmp:
             result = create_user_domain(project_root=Path(tmp), slug="finance-private", name="내 금융 위키")
-            domain_root = Path(tmp) / "user_domains" / "finance-private"
+            domain_root = (Path(tmp) / "user_domains" / "finance-private").resolve()
 
             self.assertEqual(result.domain_dir, domain_root)
             self.assertTrue((domain_root / "domain.yml").is_file())

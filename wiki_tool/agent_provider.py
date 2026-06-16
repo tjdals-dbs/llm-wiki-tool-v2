@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 from dataclasses import dataclass
 from typing import Callable, Mapping, Sequence
 
@@ -44,6 +45,17 @@ DEFAULT_PROVIDER_COMMAND = {
 DEFAULT_PROVIDER_COMMAND_CANDIDATES = {
     PROVIDER_CODEX: ("codex.cmd", "codex"),
     PROVIDER_GEMINI: ("gemini.cmd", "gemini"),
+}
+
+PLATFORM_PROVIDER_COMMAND_CANDIDATES = {
+    "windows": {
+        PROVIDER_CODEX: ("codex.cmd", "codex"),
+        PROVIDER_GEMINI: ("gemini.cmd", "gemini"),
+    },
+    "posix": {
+        PROVIDER_CODEX: ("codex", "codex.cmd"),
+        PROVIDER_GEMINI: ("gemini", "gemini.cmd"),
+    },
 }
 
 DEFAULT_PROVIDER_MODEL = {
@@ -153,10 +165,18 @@ def resolve_agent_command_candidates(provider: str, env: Mapping[str, str] | Non
         explicit_command = source.get(env_key, "").strip()
         if explicit_command:
             return (explicit_command,)
-    candidates = DEFAULT_PROVIDER_COMMAND_CANDIDATES.get(provider_key)
+    candidates = _platform_provider_command_candidates(provider_key)
     if candidates:
         return candidates
     return (resolve_agent_command(provider_key, source),)
+
+
+def _platform_provider_command_candidates(provider: str) -> tuple[str, ...]:
+    platform_key = "windows" if sys.platform.startswith("win") else "posix"
+    candidates = PLATFORM_PROVIDER_COMMAND_CANDIDATES.get(platform_key, {}).get(provider)
+    if candidates:
+        return candidates
+    return DEFAULT_PROVIDER_COMMAND_CANDIDATES.get(provider, ())
 
 
 def load_agent_provider_config(
