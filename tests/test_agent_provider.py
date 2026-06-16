@@ -102,8 +102,10 @@ class AgentProviderConfigTests(unittest.TestCase):
     def test_command_candidates_are_ordered_for_current_platform(self):
         with patch("wiki_tool.agent_provider.sys.platform", "darwin"):
             self.assertEqual(resolve_agent_command_candidates("codex", {}), ("codex", "codex.cmd"))
+            self.assertEqual(resolve_agent_command_candidates("gemini", {}), ("gemini", "gemini.cmd"))
         with patch("wiki_tool.agent_provider.sys.platform", "win32"):
             self.assertEqual(resolve_agent_command_candidates("codex", {}), ("codex.cmd", "codex"))
+            self.assertEqual(resolve_agent_command_candidates("gemini", {}), ("gemini.cmd", "gemini"))
 
     def test_explicit_provider_environment_wins_over_auto_detection(self):
         env = {"LLM_WIKI_AGENT_PROVIDER": "gemini", "LLM_WIKI_GEMINI_COMMAND": "gemini-custom"}

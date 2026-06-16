@@ -140,15 +140,16 @@ def load_environment_for_smoke(project_root: Path | None = None, *, ignore_doten
 
 
 def summarize_environment(env: Mapping[str, str], env_load: Mapping[str, Any] | None = None) -> dict[str, Any]:
-    answer_config = load_agent_provider_config("answer", env)
+    answer_config = load_agent_provider_config("answer", env, auto_detect=True)
+    gemini_config = load_agent_provider_config("answer", {**env, "LLM_WIKI_ANSWER_PROVIDER": "gemini"}, auto_detect=True)
     return {
         "env_load": dict(env_load or {}),
         "variables": {name: bool(env.get(name, "").strip()) for name in ENV_NAMES},
         "values": {name: env.get(name, "").strip() for name in ENV_NAMES},
         "resolved_answer_provider": answer_config.provider,
         "resolved_answer_model": answer_config.model,
-        "codex_command_display": _command_display(answer_config.codex_command),
-        "gemini_command_display": _command_display(env.get("LLM_WIKI_GEMINI_COMMAND", "gemini")),
+        "codex_command_display": _command_display(answer_config.provider_command or answer_config.codex_command),
+        "gemini_command_display": _command_display(gemini_config.provider_command),
     }
 
 

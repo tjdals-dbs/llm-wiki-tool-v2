@@ -15,7 +15,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from wiki_tool.agent_provider import load_agent_provider_config, resolve_codex_command
+from wiki_tool.agent_provider import load_agent_provider_config
 from wiki_tool.config import load_domain_config
 from wiki_tool.env_loader import load_dotenv_if_present
 from wiki_tool.mcp_tools import WikiToolAdapter
@@ -116,19 +116,20 @@ def load_environment_for_smoke(project_root: Path | None = None) -> dict[str, st
 
 
 def summarize_environment(env: Mapping[str, str]) -> dict[str, Any]:
-    answer_config = load_agent_provider_config("answer", env)
+    answer_config = load_agent_provider_config("answer", env, auto_detect=True)
+    codex_command = answer_config.provider_command or answer_config.codex_command
     role_models = {
         "answer": answer_config.model,
-        "ingest": load_agent_provider_config("ingest", env).model,
-        "concept": load_agent_provider_config("concept", env).model,
-        "review": load_agent_provider_config("review", env).model,
+        "ingest": load_agent_provider_config("ingest", env, auto_detect=True).model,
+        "concept": load_agent_provider_config("concept", env, auto_detect=True).model,
+        "review": load_agent_provider_config("review", env, auto_detect=True).model,
     }
     return {
         "variables": {name: bool(env.get(name, "").strip()) for name in ENV_NAMES},
         "provider": answer_config.provider,
         "resolved_models": role_models,
-        "codex_command": answer_config.codex_command,
-        "codex_command_display": _command_display(answer_config.codex_command),
+        "codex_command": codex_command,
+        "codex_command_display": _command_display(codex_command),
     }
 
 
@@ -152,7 +153,8 @@ def check_codex_cli(
     runner: Any = subprocess.run,
     timeout_seconds: int = 30,
 ) -> CodexCliCheck:
-    command = shlex.split(codex_command or resolve_codex_command(), posix=False)
+    config = load_agent_provider_config("answer", auto_detect=True)
+    command = shlex.split(codex_command or config.provider_command or config.codex_command, posix=False)
     if not command:
         command = ["codex.cmd"]
     command = [*command, "--version"]

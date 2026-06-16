@@ -29,7 +29,7 @@ class CodexAgentBridgeTests(unittest.TestCase):
         self.assertIn("read-only", command)
         self.assertEqual(command[-1], "질문")
 
-    def test_codex_command_prefers_detected_provider_command(self):
+    def test_all_codex_roles_prefer_detected_provider_command(self):
         config = AgentProviderConfig(
             provider="codex",
             model="",
@@ -37,9 +37,10 @@ class CodexAgentBridgeTests(unittest.TestCase):
             provider_command="codex",
         )
 
-        command = build_codex_command(config, "ingest", "prompt")
-
-        self.assertEqual(command[:2], ["codex", "exec"])
+        for role in ["answer", "ingest", "concept", "review"]:
+            with self.subTest(role=role):
+                command = build_codex_command(config, role, "prompt")
+                self.assertEqual(command[:2], ["codex", "exec"])
 
     def test_ingest_concept_review_use_workspace_write_sandbox(self):
         config = AgentProviderConfig(provider="codex", model="model", codex_command="codex")
