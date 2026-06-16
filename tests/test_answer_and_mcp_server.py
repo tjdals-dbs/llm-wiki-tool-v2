@@ -195,6 +195,118 @@ class AnswerAndMcpServerTests(unittest.TestCase):
             self.assertIn("개시증거금", answer_payload["answer"])
             self.assertEqual(answer_payload["save_decision"]["save_action"], "save")
 
+    def test_saved_answer_evidence_takes_priority_over_noisy_search_evidence(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            domain = load_domain_config(write_domain(root), root=root)
+            wrong = root / "wiki" / "concepts" / "clearinghouse.md"
+            correct = root / "wiki" / "concepts" / "initial-margin.md"
+            wrong.parent.mkdir(parents=True)
+            wrong.write_text(
+                "\n".join(
+                    [
+                        "# Clearinghouse",
+                        "",
+                        "## Definition",
+                        "",
+                        "alpha query token appears many times but this is the wrong concept.",
+                        "",
+                        "## Source Evidence",
+                        "",
+                        "- alpha token noisy clearinghouse evidence",
+                        "- alpha token noisy exchange evidence",
+                        "- alpha token noisy broker evidence",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            correct.write_text(
+                "\n".join(
+                    [
+                        "# Initial Margin",
+                        "",
+                        "## Definition",
+                        "",
+                        "initial margin is collateral posted when a futures position is opened.",
+                        "",
+                        "## Source Evidence",
+                        "",
+                        "- initial margin source evidence",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            answer = root / "wiki" / "answers" / "initial-margin.md"
+            answer.parent.mkdir(parents=True)
+            answer.write_text(
+                "\n".join(
+                    [
+                        "# What is initial margin",
+                        "",
+                        "## Answer",
+                        "",
+                        "initial margin is collateral posted when a futures position is opened.",
+                        "",
+                        "## Used Pages",
+                        "",
+                        "- wiki/concepts/initial-margin.md",
+                        "",
+                        "## Evidence",
+                        "",
+                        "- wiki/concepts/initial-margin.md: initial margin is collateral posted when a futures position is opened.",
+                        "",
+                        "## Related Pages",
+                        "",
+                        "- none",
+                        "",
+                        "## Maintenance Notes",
+                        "",
+                        "- created: 2026-01-01T00:00:00Z",
+                        "- updated: 2026-01-01T00:00:00Z",
+                        "- status: ok",
+                        "- question: what is initial margin",
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            adapter = WikiToolAdapter(domain)
+
+            answer_payload = adapter.answer_question("explain initial margin alpha")
+
+            self.assertEqual(answer_payload["status"], "ok")
+            self.assertEqual(answer_payload["evidence"][0]["path"], "wiki/concepts/initial-margin.md")
+            self.assertIn("initial margin", answer_payload["evidence"][0]["text"])
+
+    def test_saved_answer_evidence_is_prioritized_when_search_evidence_is_noisy(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            adapter = WikiToolAdapter(load_domain_config(write_domain(root), root=root))
+            noisy_page = {"path": "wiki/concepts/noisy.md", "type": "concept", "title": "Noisy", "score": 10}
+            saved_page = {"path": "wiki/concepts/initial-margin.md", "type": "concept", "title": "Initial Margin", "score": 0}
+            noisy_evidence = [{"path": "wiki/concepts/noisy.md", "type": "concept", "title": "Noisy", "text": "wrong evidence"}]
+            saved_evidence = [
+                {
+                    "path": "wiki/concepts/initial-margin.md",
+                    "type": "concept",
+                    "title": "Initial Margin",
+                    "text": "initial margin saved evidence",
+                }
+            ]
+
+            with patch.dict("os.environ", {"LLM_WIKI_AGENT_PROVIDER": "rule_based"}, clear=True), patch.object(
+                adapter, "_ask_answer_context", return_value=[noisy_page]
+            ), patch.object(
+                adapter,
+                "_saved_answer_reuse_context",
+                return_value={"used_pages": [saved_page], "evidence": saved_evidence},
+            ), patch.object(adapter, "_collect_answer_evidence", return_value=noisy_evidence):
+                answer_payload = adapter.answer_question("explain initial margin")
+
+            self.assertEqual(answer_payload["status"], "ok")
+            self.assertEqual(answer_payload["evidence"][0]["path"], "wiki/concepts/initial-margin.md")
+            self.assertEqual(answer_payload["evidence"][1]["path"], "wiki/concepts/noisy.md")
+
     def test_apply_wiki_update_reuses_similar_answer_page_without_duplicate_file(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

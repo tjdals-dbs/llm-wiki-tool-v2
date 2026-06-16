@@ -135,9 +135,9 @@ class WikiToolAdapter:
         provider_config = load_agent_provider_config("answer")
         context = self._ask_answer_context(query, limit=5)
         saved_context = self._saved_answer_reuse_context(query)
-        context = _merge_context_pages(context, saved_context.get("used_pages", []), limit=5)
+        context = _merge_context_pages(saved_context.get("used_pages", []), context, limit=5)
         evidence = self._collect_answer_evidence(query, context)
-        evidence = _dedupe_evidence([*evidence, *saved_context.get("evidence", [])])[:3]
+        evidence = _dedupe_evidence([*saved_context.get("evidence", []), *evidence])[:3]
         if provider_config.provider == PROVIDER_CODEX:
             codex_result = CodexAgentBridge(provider_config).run_answer(query, wiki_context=context, evidence=evidence)
             validation_error = _codex_answer_validation_error(codex_result, evidence)
