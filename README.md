@@ -19,6 +19,12 @@ LLM Wiki Tool v2는 사용자가 직접 만든 지식 도메인의 자료를 Mar
 - Answer-Derived Notes: source evidence가 있는 저장 답변에서 concept update draft를 만들고, maintenance workflow가 승인 가능한 기존 concept에만 `## Answer-Derived Notes`로 append합니다.
 - MCP Tools: agent가 파일 구조를 직접 추측하지 않고 wiki 조회, 검색, 답변, 유지보수를 호출하는 표준 인터페이스입니다.
 
+## Harness assets
+
+- `RULES.md`: agent와 사용자가 함께 따르는 raw 불변성, evidence, provider, MCP, Git 운영 지침입니다.
+- `skills/llm-wiki-maintenance/SKILL.md`: 이 repo의 도메인 생성, raw 투입, GUI maintenance, MCP readonly 검증 흐름을 재사용할 수 있게 정리한 Codex skill입니다.
+- `scripts/`, `wiki_tool/`, `tests/`: CLI/GUI/MCP 실행 경로와 검증 가능한 harness 구현입니다.
+
 ## 전체 동작 흐름
 
 1. `domain.yml`로 도메인 이름, slug, raw/wiki/manifest 경로, 기본 언어를 정의합니다.
