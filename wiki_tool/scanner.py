@@ -9,6 +9,9 @@ from .config import DomainConfig
 from .manifest import ManifestEntry, read_manifest, write_manifest
 
 
+IGNORED_RAW_FILENAMES = {".DS_Store", "Thumbs.db", "desktop.ini"}
+
+
 @dataclass(frozen=True)
 class RawScanResult:
     scanned_count: int
@@ -31,12 +34,13 @@ def scan_raw_sources(config: DomainConfig) -> RawScanResult:
     for raw_path in sorted(config.raw_dir.rglob("*")):
         if raw_path.is_dir():
             continue
+        relative_path = raw_path.relative_to(config.raw_dir).as_posix()
         if _is_ignored_raw_path(config.raw_dir, raw_path):
             ignored_count += 1
+            next_entries.pop(relative_path, None)
             continue
 
         scanned_count += 1
-        relative_path = raw_path.relative_to(config.raw_dir).as_posix()
         sha256 = _sha256(raw_path)
         source_type = _source_type(raw_path)
         old_entry = previous.get(relative_path)
@@ -96,4 +100,16 @@ def _source_type(path: Path) -> str:
 
 def _is_ignored_raw_path(raw_root: Path, path: Path) -> bool:
     parts = path.relative_to(raw_root).parts
-    return bool(parts and parts[0] == "private")
+    if not parts:
+        return False
+    if parts[0] == "private":
+        return True
+    return any(_is_hidden_or_sidecar_part(part) for part in parts)
+
+
+def _is_hidden_or_sidecar_part(part: str) -> bool:
+    if part in IGNORED_RAW_FILENAMES:
+        return True
+    if part.startswith("._"):
+        return True
+    return part.startswith(".")

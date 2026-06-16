@@ -92,6 +92,56 @@ class RawScannerTests(unittest.TestCase):
             rows = list(csv.DictReader(domain.manifest_path.read_text(encoding="utf-8").splitlines()))
             self.assertEqual(rows, [])
 
+    def test_scan_ignores_hidden_and_os_sidecar_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            domain = load_domain_config(write_domain(root), root=root)
+            raw_dir = root / "raw"
+            raw_dir.mkdir()
+            (raw_dir / ".DS_Store").write_bytes(b"mac metadata")
+            (raw_dir / "._lesson.md").write_text("resource fork sidecar", encoding="utf-8")
+            (raw_dir / "lesson.md").write_text("CAPM은 위험과 기대수익률을 연결한다.", encoding="utf-8")
+
+            result = scan_raw_sources(domain)
+
+            self.assertEqual(result.scanned_count, 1)
+            self.assertEqual(result.new_count, 1)
+            self.assertEqual(result.ignored_count, 2)
+            rows = list(csv.DictReader(domain.manifest_path.read_text(encoding="utf-8").splitlines()))
+            self.assertEqual([row["path"] for row in rows], ["lesson.md"])
+
+    def test_scan_removes_previously_recorded_os_sidecar_files_from_manifest(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            domain = load_domain_config(write_domain(root), root=root)
+            raw_dir = root / "raw"
+            raw_dir.mkdir()
+            (raw_dir / ".DS_Store").write_bytes(b"mac metadata")
+            (raw_dir / "lesson.md").write_text("CAPM은 위험과 기대수익률을 연결한다.", encoding="utf-8")
+            domain.manifest_path.parent.mkdir(parents=True)
+            domain.manifest_path.write_text(
+                _write_csv(
+                    [
+                        {
+                            "path": ".DS_Store",
+                            "sha256": "0" * 64,
+                            "source_type": "text",
+                            "status": "summarized",
+                            "detected_at": "2026-01-01T00:00:00+00:00",
+                            "source_page": "wiki/sources/ds_store.md",
+                            "notes": "",
+                        }
+                    ]
+                ),
+                encoding="utf-8",
+                newline="",
+            )
+
+            scan_raw_sources(domain)
+
+            rows = list(csv.DictReader(domain.manifest_path.read_text(encoding="utf-8").splitlines()))
+            self.assertEqual([row["path"] for row in rows], ["lesson.md"])
+
 
 def _write_csv(rows: list[dict[str, str]]) -> str:
     from io import StringIO
