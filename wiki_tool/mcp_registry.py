@@ -28,10 +28,27 @@ MCP_TOOL_NAMES = [
     "run_wiki_lint",
 ]
 
+MCP_READONLY_TOOL_NAMES = [
+    "list_wiki_pages",
+    "read_wiki_page",
+    "search_wiki",
+    "get_wiki_graph",
+    "get_related_pages",
+    "ask_wiki_context",
+    "run_wiki_lint",
+]
 
-def create_tool_registry(config: DomainConfig) -> dict[str, Callable[..., Any]]:
+MCP_TOOLSET_READONLY = "readonly"
+MCP_TOOLSET_FULL = "full"
+MCP_TOOLSETS = (MCP_TOOLSET_READONLY, MCP_TOOLSET_FULL)
+
+
+def create_tool_registry(config: DomainConfig, *, toolset: str = MCP_TOOLSET_FULL) -> dict[str, Callable[..., Any]]:
+    if toolset not in MCP_TOOLSETS:
+        raise ValueError(f"Unknown MCP toolset: {toolset}")
+
     adapter = WikiToolAdapter(config)
-    return {
+    registry = {
         "list_wiki_pages": adapter.list_wiki_pages,
         "read_wiki_page": adapter.read_wiki_page,
         "search_wiki": adapter.search_wiki,
@@ -51,3 +68,6 @@ def create_tool_registry(config: DomainConfig) -> dict[str, Callable[..., Any]]:
         "apply_wiki_update": adapter.apply_wiki_update,
         "run_wiki_lint": adapter.run_wiki_lint,
     }
+    if toolset == MCP_TOOLSET_READONLY:
+        return {name: registry[name] for name in MCP_READONLY_TOOL_NAMES}
+    return {name: registry[name] for name in MCP_TOOL_NAMES}

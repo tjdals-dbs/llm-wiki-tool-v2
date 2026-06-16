@@ -318,15 +318,46 @@ class AnswerAndMcpServerTests(unittest.TestCase):
             registered = register_mcp_tools(server, domain)
 
             self.assertIn("list_wiki_pages", server.tools)
-            self.assertIn("answer_question", server.tools)
+            self.assertIn("ask_wiki_context", server.tools)
+            self.assertIn("run_wiki_lint", server.tools)
+            self.assertNotIn("answer_question", server.tools)
+            self.assertNotIn("scan_raw_sources", server.tools)
             self.assertEqual(set(registered), set(server.tools))
 
-    def test_create_fastmcp_server_registers_required_tools(self):
+    def test_register_mcp_tools_can_expose_full_toolset(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            domain = load_domain_config(write_domain(root), root=root)
+            server = FakeMcpServer()
+
+            registered = register_mcp_tools(server, domain, toolset="full")
+
+            self.assertIn("list_wiki_pages", server.tools)
+            self.assertIn("answer_question", server.tools)
+            self.assertIn("scan_raw_sources", server.tools)
+            self.assertEqual(set(registered), set(server.tools))
+
+    def test_create_fastmcp_server_defaults_to_readonly_tools(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             domain = load_domain_config(write_domain(root), root=root)
 
             server = create_fastmcp_server(domain)
+            tools = asyncio.run(server.list_tools())
+            tool_names = {tool.name for tool in tools}
+
+            self.assertIn("list_wiki_pages", tool_names)
+            self.assertIn("ask_wiki_context", tool_names)
+            self.assertIn("run_wiki_lint", tool_names)
+            self.assertNotIn("scan_raw_sources", tool_names)
+            self.assertNotIn("answer_question", tool_names)
+
+    def test_create_fastmcp_server_can_expose_full_toolset(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            domain = load_domain_config(write_domain(root), root=root)
+
+            server = create_fastmcp_server(domain, toolset="full")
             tools = asyncio.run(server.list_tools())
             tool_names = {tool.name for tool in tools}
 

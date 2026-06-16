@@ -124,36 +124,38 @@ python scripts\lint_wiki.py --domain examples\finance\domain.yml
 MCP server 실행:
 
 ```powershell
-python scripts\run_mcp_server.py --domain examples\finance\domain.yml --transport stdio
+python scripts\run_mcp_server.py --domain examples\finance\domain.yml --transport stdio --toolset readonly
 ```
 
 GUI와 MCP server는 실행 목적이 다릅니다. GUI는 내부 wiki core를 직접 호출하는 데스크톱 클라이언트이고, MCP server는 Codex 같은 외부 agent가 같은 wiki 기능을 tool로 호출하기 위한 stdio server입니다. stdio MCP server는 사용자가 미리 켜두는 상시 서버가 아니라, MCP client에 등록된 command가 필요할 때 실행하는 방식입니다.
 
+MCP server의 기본 toolset은 `readonly`입니다. 외부 agent 연결에서는 wiki page 목록, 읽기, 검색, graph/context, lint 같은 가벼운 read-only/context 도구만 노출하고, 실제 답변 생성은 외부 Codex agent가 담당하는 구조를 권장합니다. raw ingest, source summary, concept organize, answer 저장, review 같은 무거운 생성/수정 도구는 GUI의 maintenance workflow에서 실행하세요. 외부 MCP client에 maintenance/update 도구까지 의도적으로 노출해야 할 때만 `--toolset full`을 사용합니다.
+
 Codex MCP client 등록 예시:
 
 ```powershell
-codex mcp add llm-wiki -- python scripts\run_mcp_server.py --domain examples\finance\domain.yml --transport stdio
+codex mcp add llm-wiki -- python scripts\run_mcp_server.py --domain examples\finance\domain.yml --transport stdio --toolset readonly
 ```
 
 setup wrapper로 만든 `.venv`를 명시하려면:
 
 ```powershell
-codex mcp add llm-wiki -- .venv\Scripts\python.exe scripts\run_mcp_server.py --domain examples\finance\domain.yml --transport stdio
+codex mcp add llm-wiki -- .venv\Scripts\python.exe scripts\run_mcp_server.py --domain examples\finance\domain.yml --transport stdio --toolset readonly
 ```
 
 macOS/Linux:
 
 ```bash
-codex mcp add llm-wiki -- python3 scripts/run_mcp_server.py --domain examples/finance/domain.yml --transport stdio
+codex mcp add llm-wiki -- python3 scripts/run_mcp_server.py --domain examples/finance/domain.yml --transport stdio --toolset readonly
 ```
 
 `.venv` Python을 명시하려면:
 
 ```bash
-codex mcp add llm-wiki -- .venv/bin/python scripts/run_mcp_server.py --domain examples/finance/domain.yml --transport stdio
+codex mcp add llm-wiki -- .venv/bin/python scripts/run_mcp_server.py --domain examples/finance/domain.yml --transport stdio --toolset readonly
 ```
 
-완성된 wiki를 포함해 배포받은 사용자는 raw ingest를 다시 실행하지 않아도 MCP server를 통해 읽기, 검색, 질문 tool을 사용할 수 있습니다.
+완성된 wiki를 포함해 배포받은 사용자는 raw ingest를 다시 실행하지 않아도 MCP server를 통해 읽기, 검색, context tool을 사용할 수 있습니다.
 
 Codex MCP 등록 예시는 사용하는 MCP host 설정 형식에 맞춰 아래 command/args를 넣으면 됩니다.
 
@@ -167,7 +169,9 @@ Codex MCP 등록 예시는 사용하는 MCP host 설정 형식에 맞춰 아래 
         "--domain",
         "examples\\finance\\domain.yml",
         "--transport",
-        "stdio"
+        "stdio",
+        "--toolset",
+        "readonly"
       ]
     }
   }
@@ -235,6 +239,8 @@ GUI는 browser UI가 아니라 PySide6 기반 3분할 데스크톱 앱입니다.
 일반 사용자는 `위키 업데이트` 버튼 하나로 raw scan, source summary, concept organize, answer-derived concept update, graph/navigation refresh, lint를 실행할 수 있습니다. 세부 작업 버튼은 `고급 관리` 영역에 접어 둡니다.
 
 ## MCP Tool 목록
+
+기본 MCP server는 `--toolset readonly`로 실행되며 다음 read-only/context 도구만 노출합니다: `list_wiki_pages`, `read_wiki_page`, `search_wiki`, `get_wiki_graph`, `get_related_pages`, `ask_wiki_context`, `run_wiki_lint`. 아래 전체 도구 목록은 `--toolset full`을 명시했을 때 외부 MCP client에 노출할 수 있는 maintenance/update 도구까지 포함합니다.
 
 | Tool | 역할 |
 | --- | --- |

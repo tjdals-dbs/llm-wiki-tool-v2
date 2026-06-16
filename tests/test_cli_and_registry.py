@@ -1,4 +1,7 @@
 import os
+import contextlib
+import importlib.util
+import io
 import subprocess
 import sys
 import tempfile
@@ -7,7 +10,19 @@ from pathlib import Path
 from unittest.mock import patch
 
 from wiki_tool.config import load_domain_config
-from wiki_tool.mcp_registry import MCP_TOOL_NAMES, create_tool_registry
+from wiki_tool.mcp_registry import MCP_READONLY_TOOL_NAMES, MCP_TOOL_NAMES, create_tool_registry
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+RUN_MCP_SERVER_SCRIPT = REPO_ROOT / "scripts" / "run_mcp_server.py"
+
+
+def _load_run_mcp_server_module():
+    spec = importlib.util.spec_from_file_location("run_mcp_server_under_test", RUN_MCP_SERVER_SCRIPT)
+    module = importlib.util.module_from_spec(spec)
+    assert spec and spec.loader
+    spec.loader.exec_module(module)
+    return module
 
 
 def write_domain(root: Path) -> Path:
@@ -85,6 +100,113 @@ class CliAndRegistryTests(unittest.TestCase):
             self.assertIn("draft_concept_update_with_agent", registry)
             self.assertIn("review_wiki_changes_with_agent", registry)
             self.assertIn("run_wiki_lint", registry)
+
+    def test_readonly_tool_registry_exposes_context_tools_only(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = load_domain_config(write_domain(root), root=root)
+            registry = create_tool_registry(config, toolset="readonly")
+
+            self.assertEqual(set(registry), set(MCP_READONLY_TOOL_NAMES))
+            self.assertEqual(
+                list(registry),
+                [
+                    "list_wiki_pages",
+                    "read_wiki_page",
+                    "search_wiki",
+                    "get_wiki_graph",
+                    "get_related_pages",
+                    "ask_wiki_context",
+                    "run_wiki_lint",
+                ],
+            )
+            self.assertNotIn("answer_question", registry)
+            self.assertNotIn("scan_raw_sources", registry)
+            self.assertNotIn("summarize_new_sources", registry)
+            self.assertNotIn("organize_pending_sources", registry)
+            self.assertNotIn("apply_wiki_update", registry)
+            self.assertNotIn("draft_source_summary_with_agent", registry)
+            self.assertNotIn("draft_concept_update_with_agent", registry)
+            self.assertNotIn("review_wiki_changes_with_agent", registry)
+
+    def test_full_tool_registry_keeps_existing_toolset(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = load_domain_config(write_domain(root), root=root)
+            registry = create_tool_registry(config, toolset="full")
+
+            self.assertEqual(set(registry), set(MCP_TOOL_NAMES))
+            self.assertIn("answer_question", registry)
+            self.assertIn("apply_wiki_update", registry)
+
+    def test_unknown_toolset_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = load_domain_config(write_domain(root), root=root)
+
+            with self.assertRaises(ValueError):
+                create_tool_registry(config, toolset="everything")
+
+    def test_run_mcp_server_defaults_to_readonly_toolset(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            domain_file = write_domain(root)
+            module = _load_run_mcp_server_module()
+            captured: dict[str, str] = {}
+
+            class FakeServer:
+                def run(self, *, transport: str) -> None:
+                    captured["transport"] = transport
+
+            def fake_create_fastmcp_server(config, *, toolset: str = "readonly"):
+                captured["slug"] = config.slug
+                captured["toolset"] = toolset
+                return FakeServer()
+
+            module.create_fastmcp_server = fake_create_fastmcp_server
+            module.load_dotenv_if_present = lambda project_root: None
+
+            exit_code = module.main(["--domain", str(domain_file), "--transport", "stdio"])
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(captured["toolset"], "readonly")
+        self.assertEqual(captured["transport"], "stdio")
+
+    def test_run_mcp_server_accepts_full_toolset_option(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            domain_file = write_domain(root)
+            module = _load_run_mcp_server_module()
+            captured: dict[str, str] = {}
+
+            class FakeServer:
+                def run(self, *, transport: str) -> None:
+                    captured["transport"] = transport
+
+            def fake_create_fastmcp_server(config, *, toolset: str = "readonly"):
+                captured["slug"] = config.slug
+                captured["toolset"] = toolset
+                return FakeServer()
+
+            module.create_fastmcp_server = fake_create_fastmcp_server
+            module.load_dotenv_if_present = lambda project_root: None
+
+            exit_code = module.main(
+                ["--domain", str(domain_file), "--transport", "stdio", "--toolset", "full"]
+            )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(captured["toolset"], "full")
+
+    def test_run_mcp_server_rejects_unknown_toolset_choice(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            domain_file = write_domain(root)
+            module = _load_run_mcp_server_module()
+            module.load_dotenv_if_present = lambda project_root: None
+
+            with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                module.main(["--domain", str(domain_file), "--toolset", "unsafe"])
 
     def test_cli_runs_raw_to_concept_pipeline_from_domain_file(self):
         with tempfile.TemporaryDirectory() as tmp:

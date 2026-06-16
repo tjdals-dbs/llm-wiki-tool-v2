@@ -10,6 +10,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from wiki_tool.config import load_domain_config
 from wiki_tool.env_loader import load_dotenv_if_present
+from wiki_tool.mcp_registry import MCP_TOOLSETS
 from wiki_tool.mcp_server import create_fastmcp_server
 
 
@@ -18,10 +19,16 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="LLM Wiki MCP server를 실행합니다.")
     parser.add_argument("--domain", required=True, help="domain.yml 경로")
     parser.add_argument("--transport", default="stdio", choices=["stdio", "sse", "streamable-http"])
+    parser.add_argument(
+        "--toolset",
+        default="readonly",
+        choices=MCP_TOOLSETS,
+        help="MCP toolset to expose. readonly is the default for external agents.",
+    )
     args = parser.parse_args(argv)
 
     config = load_domain_config(Path(args.domain))
-    server = create_fastmcp_server(config)
+    server = create_fastmcp_server(config, toolset=args.toolset)
     server.run(transport=args.transport)
     return 0
 
