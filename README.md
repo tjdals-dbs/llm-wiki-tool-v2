@@ -65,15 +65,19 @@ user_domains/
 PySide6 desktop GUI 실행:
 
 ```powershell
+setup.bat
 run_app.bat
 ```
 
 macOS/Linux:
 
 ```bash
-chmod +x run_app.sh
+chmod +x setup.sh run_app.sh
+./setup.sh
 ./run_app.sh
 ```
+
+`run_app.bat`과 `run_app.sh`는 repo-local `.venv`의 Python을 사용합니다. clone 후 처음 실행할 때는 먼저 `setup.bat` 또는 `./setup.sh`로 가상환경과 의존성을 준비하세요.
 
 직접 Python launcher를 실행해 domain을 지정할 수도 있습니다.
 
@@ -131,10 +135,22 @@ Codex MCP client 등록 예시:
 codex mcp add llm-wiki -- python scripts\run_mcp_server.py --domain examples\finance\domain.yml --transport stdio
 ```
 
+setup wrapper로 만든 `.venv`를 명시하려면:
+
+```powershell
+codex mcp add llm-wiki -- .venv\Scripts\python.exe scripts\run_mcp_server.py --domain examples\finance\domain.yml --transport stdio
+```
+
 macOS/Linux:
 
 ```bash
 codex mcp add llm-wiki -- python3 scripts/run_mcp_server.py --domain examples/finance/domain.yml --transport stdio
+```
+
+`.venv` Python을 명시하려면:
+
+```bash
+codex mcp add llm-wiki -- .venv/bin/python scripts/run_mcp_server.py --domain examples/finance/domain.yml --transport stdio
 ```
 
 완성된 wiki를 포함해 배포받은 사용자는 raw ingest를 다시 실행하지 않아도 MCP server를 통해 읽기, 검색, 질문 tool을 사용할 수 있습니다.
