@@ -777,6 +777,27 @@ class DesktopGuiTests(unittest.TestCase):
         self.assertEqual(result.status, "ok")
         self.assertEqual(result.answer, "Gemini route answer")
 
+    def test_mcp_route_uses_actual_answer_provider_after_failover(self):
+        def registry(_config):
+            return {
+                "answer_question": lambda _query: {
+                    "status": "ok",
+                    "answer": "Gemini failover answer",
+                    "provider": "gemini",
+                    "fallback": False,
+                    "codex_status": "codex_error",
+                    "used_pages": [],
+                    "related_pages": [],
+                    "evidence": [],
+                }
+            }
+
+        with patch.dict("os.environ", {"LLM_WIKI_AGENT_PROVIDER": "codex"}, clear=True):
+            result = McpCodexAgentRoute(object(), registry_factory=registry).ask("CAPM")
+
+        self.assertEqual(result.route, "mcp/gemini")
+        self.assertEqual(result.status, "ok")
+
     def test_mcp_route_labels_gemini_fallback_status(self):
         def registry(_config):
             return {

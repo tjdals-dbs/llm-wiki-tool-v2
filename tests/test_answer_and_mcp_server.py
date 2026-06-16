@@ -186,7 +186,42 @@ class AnswerAndMcpServerTests(unittest.TestCase):
             self.assertIn("wiki_context", call.kwargs)
             self.assertIn("evidence", call.kwargs)
 
-    def test_answer_question_falls_back_when_codex_fails(self):
+    def test_answer_question_tries_gemini_when_global_codex_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            adapter = build_adapter(Path(tmp))
+            codex_result = CodexAgentResult(
+                ok=False,
+                status="codex_error",
+                answer="",
+                used_pages=[],
+                related_pages=[],
+                evidence=[],
+                error="Codex CLI execution failed",
+            )
+            gemini_result = GeminiAgentResult(
+                ok=True,
+                status="ok",
+                answer="Gemini answered from wiki evidence.",
+                used_pages=[],
+                related_pages=[],
+                evidence=[],
+            )
+
+            with patch.dict("os.environ", {"LLM_WIKI_AGENT_PROVIDER": "codex"}, clear=True), patch(
+                "wiki_tool.mcp_tools.CodexAgentBridge"
+            ) as codex_bridge_cls, patch("wiki_tool.mcp_tools.GeminiAgentBridge") as gemini_bridge_cls:
+                codex_bridge_cls.return_value.run_answer.return_value = codex_result
+                gemini_bridge_cls.return_value.run_prompt.return_value = gemini_result
+                answer = adapter.answer_question("CAPM")
+
+            self.assertEqual(answer["provider"], "gemini")
+            self.assertFalse(answer["fallback"])
+            self.assertEqual(answer["codex_status"], "codex_error")
+            self.assertIn("Gemini", answer["answer"])
+            self.assertEqual(answer["save_decision"]["save_action"], "save")
+            self.assertTrue(answer["save_decision"]["save_eligible"])
+
+    def test_answer_question_falls_back_when_strict_answer_codex_fails(self):
         with tempfile.TemporaryDirectory() as tmp:
             adapter = build_adapter(Path(tmp))
             codex_result = CodexAgentResult(
@@ -199,7 +234,7 @@ class AnswerAndMcpServerTests(unittest.TestCase):
                 error="Codex CLI command를 찾지 못했습니다.",
             )
 
-            with patch.dict("os.environ", {"LLM_WIKI_AGENT_PROVIDER": "codex"}, clear=True), patch(
+            with patch.dict("os.environ", {"LLM_WIKI_ANSWER_PROVIDER": "codex"}, clear=True), patch(
                 "wiki_tool.mcp_tools.CodexAgentBridge"
             ) as bridge_cls:
                 bridge_cls.return_value.run_answer.return_value = codex_result
@@ -225,7 +260,7 @@ class AnswerAndMcpServerTests(unittest.TestCase):
                 evidence=[],
             )
 
-            with patch.dict("os.environ", {"LLM_WIKI_AGENT_PROVIDER": "codex"}, clear=True), patch(
+            with patch.dict("os.environ", {"LLM_WIKI_ANSWER_PROVIDER": "codex"}, clear=True), patch(
                 "wiki_tool.mcp_tools.CodexAgentBridge"
             ) as bridge_cls:
                 bridge_cls.return_value.run_answer.return_value = codex_result

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import asdict
 from datetime import datetime, timezone
@@ -131,36 +132,69 @@ class WikiToolAdapter:
 
     def answer_question(self, query: str) -> dict[str, Any]:
         provider_config = load_agent_provider_config("answer")
+        context = self._ask_answer_context(query, limit=5)
+        evidence = self._collect_answer_evidence(query, context)
         if provider_config.provider == PROVIDER_CODEX:
-            context = self._ask_answer_context(query, limit=5)
-            evidence = self._collect_answer_evidence(query, context)
             codex_result = CodexAgentBridge(provider_config).run_answer(query, wiki_context=context, evidence=evidence)
             validation_error = _codex_answer_validation_error(codex_result, evidence)
             if codex_result.ok and not validation_error:
                 payload = codex_result.to_answer_payload()
                 payload["fallback"] = False
                 return _answer_with_save_decision(query, payload)
+            if _can_try_answer_provider_failover(provider_config.provider):
+                gemini_config = _answer_failover_provider_config(PROVIDER_GEMINI)
+                gemini_payload, gemini_error, gemini_status = self._run_gemini_answer_provider(
+                    gemini_config,
+                    query,
+                    context,
+                    evidence,
+                )
+                if gemini_payload is not None:
+                    gemini_payload["codex_status"] = codex_result.status if not validation_error else "codex_invalid_answer"
+                    return _answer_with_save_decision(query, gemini_payload)
             fallback = self._answer_question_rule_based(query, context=context, evidence=evidence)
             fallback["provider"] = "rule_based"
             fallback["fallback"] = True
             fallback["fallback_reason"] = codex_result.error or f"Codex answer draft invalid: {validation_error}"
             fallback["codex_status"] = codex_result.status if not validation_error else "codex_invalid_answer"
+            if _can_try_answer_provider_failover(provider_config.provider):
+                fallback["fallback_reason"] = _combine_fallback_reasons(
+                    fallback["fallback_reason"],
+                    gemini_error,
+                    provider="Gemini",
+                )
+                fallback["gemini_status"] = gemini_status
             return _answer_with_save_decision(query, fallback)
         if provider_config.provider == PROVIDER_GEMINI:
-            context = self._ask_answer_context(query, limit=5)
-            evidence = self._collect_answer_evidence(query, context)
-            prompt = build_gemini_answer_prompt(query, wiki_context=context, evidence=evidence)
-            gemini_result = GeminiAgentBridge(provider_config).run_prompt(prompt)
-            payload = _gemini_payload_with_local_evidence(gemini_result.to_answer_payload(), context, evidence)
-            validation_error = _agent_answer_validation_error(payload, evidence) if gemini_result.ok else ""
-            if gemini_result.ok and not validation_error:
-                payload["fallback"] = False
-                return _answer_with_save_decision(query, payload)
+            gemini_payload, gemini_error, gemini_status = self._run_gemini_answer_provider(
+                provider_config,
+                query,
+                context,
+                evidence,
+            )
+            if gemini_payload is not None:
+                return _answer_with_save_decision(query, gemini_payload)
+            if _can_try_answer_provider_failover(provider_config.provider):
+                codex_config = _answer_failover_provider_config(PROVIDER_CODEX)
+                codex_result = CodexAgentBridge(codex_config).run_answer(query, wiki_context=context, evidence=evidence)
+                validation_error = _codex_answer_validation_error(codex_result, evidence)
+                if codex_result.ok and not validation_error:
+                    payload = codex_result.to_answer_payload()
+                    payload["fallback"] = False
+                    payload["gemini_status"] = gemini_status
+                    return _answer_with_save_decision(query, payload)
             fallback = self._answer_question_rule_based(query, context=context, evidence=evidence)
             fallback["provider"] = "rule_based"
             fallback["fallback"] = True
-            fallback["fallback_reason"] = gemini_result.error or f"Gemini answer draft invalid: {validation_error}"
-            fallback["gemini_status"] = gemini_result.status if not validation_error else "gemini_invalid_answer"
+            fallback["fallback_reason"] = gemini_error
+            fallback["gemini_status"] = gemini_status
+            if _can_try_answer_provider_failover(provider_config.provider):
+                fallback["fallback_reason"] = _combine_fallback_reasons(
+                    fallback["fallback_reason"],
+                    codex_result.error or f"Codex answer draft invalid: {validation_error}",
+                    provider="Codex",
+                )
+                fallback["codex_status"] = codex_result.status if not validation_error else "codex_invalid_answer"
             return _answer_with_save_decision(query, fallback)
         if provider_config.provider != PROVIDER_RULE_BASED:
             answer = self._answer_question_rule_based(query)
@@ -175,6 +209,24 @@ class WikiToolAdapter:
         answer["provider"] = "rule_based"
         answer["fallback"] = False
         return _answer_with_save_decision(query, answer)
+
+    def _run_gemini_answer_provider(
+        self,
+        provider_config: Any,
+        query: str,
+        context: list[dict[str, Any]],
+        evidence: list[dict[str, str]],
+    ) -> tuple[dict[str, Any] | None, str, str]:
+        prompt = build_gemini_answer_prompt(query, wiki_context=context, evidence=evidence)
+        gemini_result = GeminiAgentBridge(provider_config).run_prompt(prompt)
+        payload = _gemini_payload_with_local_evidence(gemini_result.to_answer_payload(), context, evidence)
+        validation_error = _agent_answer_validation_error(payload, evidence) if gemini_result.ok else ""
+        if gemini_result.ok and not validation_error:
+            payload["fallback"] = False
+            return payload, "", gemini_result.status
+        reason = gemini_result.error or f"Gemini answer draft invalid: {validation_error}"
+        status = gemini_result.status if not validation_error else "gemini_invalid_answer"
+        return None, reason, status
 
     def _answer_question_rule_based(
         self,
@@ -472,6 +524,27 @@ def _codex_answer_validation_error(result: Any, local_evidence: list[dict[str, A
     if not result.ok:
         return ""
     return _agent_answer_validation_error(result.to_answer_payload(), local_evidence)
+
+
+def _can_try_answer_provider_failover(primary_provider: str) -> bool:
+    if primary_provider not in {PROVIDER_CODEX, PROVIDER_GEMINI}:
+        return False
+    strict_provider = os.environ.get("LLM_WIKI_ANSWER_PROVIDER", "").strip().casefold()
+    return strict_provider not in {PROVIDER_CODEX, PROVIDER_GEMINI, PROVIDER_RULE_BASED}
+
+
+def _answer_failover_provider_config(provider: str) -> Any:
+    env = dict(os.environ)
+    env["LLM_WIKI_ANSWER_PROVIDER"] = provider
+    return load_agent_provider_config("answer", env=env, auto_detect=True)
+
+
+def _combine_fallback_reasons(primary_reason: str, secondary_reason: str, *, provider: str) -> str:
+    if not secondary_reason:
+        return primary_reason
+    if not primary_reason:
+        return f"{provider}: {secondary_reason}"
+    return f"{primary_reason}; {provider}: {secondary_reason}"
 
 
 def _agent_answer_validation_error(payload: dict[str, Any], local_evidence: list[dict[str, Any]]) -> str:

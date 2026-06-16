@@ -153,10 +153,18 @@ class McpCodexAgentRoute:
             registry = self.registry_factory(self.config)
             answer_tool = registry["answer_question"]
             answer = answer_tool(query)
+            answer_provider = str(answer.get("provider") or provider)
+            if answer.get("fallback") and answer_provider == PROVIDER_RULE_BASED:
+                if answer.get("gemini_status"):
+                    answer_provider = PROVIDER_GEMINI
+                elif answer.get("codex_status"):
+                    answer_provider = PROVIDER_CODEX
+            if answer_provider in {PROVIDER_CODEX, PROVIDER_GEMINI, PROVIDER_RULE_BASED}:
+                route = f"mcp/{answer_provider}"
             result = _route_result_from_answer(answer, route=route, question=query)
-            if result.route == route and answer.get("fallback") and provider in {PROVIDER_CODEX, PROVIDER_GEMINI}:
+            if result.route == route and answer.get("fallback") and answer_provider in {PROVIDER_CODEX, PROVIDER_GEMINI}:
                 return AgentRouteResult(
-                    route=f"mcp/{provider} fallback",
+                    route=f"mcp/{answer_provider} fallback",
                     status=result.status,
                     answer=result.answer,
                     used_pages=result.used_pages,
