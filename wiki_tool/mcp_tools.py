@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import re
+from difflib import SequenceMatcher
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -133,7 +134,10 @@ class WikiToolAdapter:
     def answer_question(self, query: str) -> dict[str, Any]:
         provider_config = load_agent_provider_config("answer")
         context = self._ask_answer_context(query, limit=5)
+        saved_context = self._saved_answer_reuse_context(query)
+        context = _merge_context_pages(context, saved_context.get("used_pages", []), limit=5)
         evidence = self._collect_answer_evidence(query, context)
+        evidence = _dedupe_evidence([*evidence, *saved_context.get("evidence", [])])[:3]
         if provider_config.provider == PROVIDER_CODEX:
             codex_result = CodexAgentBridge(provider_config).run_answer(query, wiki_context=context, evidence=evidence)
             validation_error = _codex_answer_validation_error(codex_result, evidence)
@@ -197,7 +201,7 @@ class WikiToolAdapter:
                 fallback["codex_status"] = codex_result.status if not validation_error else "codex_invalid_answer"
             return _answer_with_save_decision(query, fallback)
         if provider_config.provider != PROVIDER_RULE_BASED:
-            answer = self._answer_question_rule_based(query)
+            answer = self._answer_question_rule_based(query, context=context, evidence=evidence)
             answer["provider"] = "rule_based"
             answer["fallback"] = True
             answer["fallback_reason"] = (
@@ -205,7 +209,7 @@ class WikiToolAdapter:
             )
             answer["codex_status"] = "unsupported_provider_fallback"
             return _answer_with_save_decision(query, answer)
-        answer = self._answer_question_rule_based(query)
+        answer = self._answer_question_rule_based(query, context=context, evidence=evidence)
         answer["provider"] = "rule_based"
         answer["fallback"] = False
         return _answer_with_save_decision(query, answer)
@@ -276,6 +280,61 @@ class WikiToolAdapter:
                 )
         return _dedupe_evidence(collected)[:3]
 
+    def _saved_answer_reuse_context(self, query: str) -> dict[str, list[dict[str, Any]]]:
+        answer_page = self._find_reusable_answer_page(query)
+        if not answer_page:
+            return {"used_pages": [], "evidence": []}
+        pages_by_path = {page["path"]: page for page in self.list_wiki_pages()}
+        used_pages: list[dict[str, Any]] = []
+        for path in answer_page.get("used_paths", []):
+            page = pages_by_path.get(path)
+            if page and page.get("type") in ANSWER_CONTEXT_PAGE_TYPES:
+                used_pages.append(
+                    {
+                        "path": page["path"],
+                        "type": page["type"],
+                        "title": page["title"],
+                        "score": 0,
+                        "snippet": _first_nonempty_line(self.read_wiki_page(page["path"])),
+                    }
+                )
+        evidence: list[dict[str, Any]] = []
+        for item in answer_page.get("evidence", []):
+            path = str(item.get("path") or "")
+            page = pages_by_path.get(path, {})
+            page_type = str(page.get("type") or _page_type(path))
+            if page_type not in ANSWER_CONTEXT_PAGE_TYPES:
+                continue
+            evidence.append(
+                {
+                    "path": path,
+                    "type": page_type,
+                    "title": str(page.get("title") or Path(path).stem),
+                    "text": str(item.get("text") or "").strip(),
+                }
+            )
+        return {"used_pages": used_pages, "evidence": _dedupe_evidence(evidence)}
+
+    def _find_reusable_answer_page(self, query: str) -> dict[str, Any] | None:
+        answers_dir = self.config.wiki_dir / "answers"
+        if not answers_dir.exists():
+            return None
+        answers_root = answers_dir.resolve()
+        candidates: list[dict[str, Any]] = []
+        for path in sorted(answers_dir.rglob("*.md")):
+            resolved = path.resolve()
+            if resolved != answers_root and answers_root not in resolved.parents:
+                continue
+            page = _parse_saved_answer_page(self.config, path)
+            if page.get("status") != "ok" or not page.get("evidence"):
+                continue
+            if _similar_question(query, str(page.get("question") or page.get("title") or "")) or _answer_page_matches_query(
+                query,
+                page,
+            ):
+                candidates.append(page)
+        return candidates[0] if candidates else None
+
     def scan_raw_sources(self) -> dict[str, Any]:
         result = core_scan_raw_sources(self.config)
         return {"message": "raw source scan 완료", **asdict(result)}
@@ -332,9 +391,25 @@ class WikiToolAdapter:
         answer_dir = self.config.wiki_dir / "answers"
         answer_dir.mkdir(parents=True, exist_ok=True)
         title = (suggested_title or question).strip() or question
-        path = answer_dir / f"{_slug(title)}.md"
+        path = self._answer_update_path(answer_dir, title=title, question=question, answer=answer)
         existed = path.exists()
         existing_created = _answer_metadata_value(path, "created") if existed else ""
+        if existed:
+            existing = _parse_saved_answer_page(self.config, path)
+            if _similar_question(question, str(existing.get("question") or existing.get("title") or "")) and _similar_answer(
+                answer,
+                str(existing.get("answer") or ""),
+            ):
+                relative_path = path.relative_to(self.config.root).as_posix()
+                return {
+                    "path": relative_path,
+                    "status": status,
+                    "created": False,
+                    "updated": False,
+                    "unchanged": True,
+                    "navigation_refreshed": False,
+                    "graph_refreshed": False,
+                }
         now = _utc_timestamp()
         created_at = existing_created or now
         updated_at = now
@@ -361,9 +436,26 @@ class WikiToolAdapter:
             "status": status,
             "created": not existed,
             "updated": existed,
+            "unchanged": False,
             "navigation_refreshed": True,
             "graph_refreshed": True,
         }
+
+    def _answer_update_path(self, answer_dir: Path, *, title: str, question: str, answer: str) -> Path:
+        default_path = answer_dir / f"{_slug(title)}.md"
+        if default_path.exists():
+            return default_path
+        answers_root = answer_dir.resolve()
+        for path in sorted(answer_dir.rglob("*.md")):
+            resolved = path.resolve()
+            if resolved != answers_root and answers_root not in resolved.parents:
+                continue
+            existing = _parse_saved_answer_page(self.config, path)
+            if _similar_question(question, str(existing.get("question") or existing.get("title") or "")):
+                return path
+            if _similar_answer(answer, str(existing.get("answer") or "")):
+                return path
+        return default_path
 
     def run_wiki_lint(self) -> dict[str, Any]:
         result = core_run_wiki_lint(self.config)
@@ -455,6 +547,169 @@ def _section_lines(content: str, heading: str) -> list[str]:
         if in_section and line.strip():
             collected.append(line.strip())
     return collected
+
+
+def _section_text(content: str, heading: str) -> str:
+    return "\n".join(_section_lines(content, heading)).strip()
+
+
+def _metadata_value(content: str, key: str) -> str:
+    prefix = f"- {key}:"
+    for line in _section_lines(content, "Maintenance Notes"):
+        if line.startswith(prefix):
+            return line.split(":", 1)[1].strip()
+    return ""
+
+
+def _parse_saved_answer_page(config: DomainConfig, path: Path) -> dict[str, Any]:
+    try:
+        content = path.read_text(encoding="utf-8")
+    except Exception:
+        return {"path": path.relative_to(config.root).as_posix(), "status": "", "evidence": []}
+    return {
+        "path": path.relative_to(config.root).as_posix(),
+        "title": _title_from_content(content) or path.stem,
+        "question": _metadata_value(content, "question"),
+        "answer": _section_text(content, "Answer"),
+        "used_paths": _answer_page_paths(content, "Used Pages"),
+        "related_paths": _answer_page_paths(content, "Related Pages"),
+        "evidence": _answer_page_evidence(content),
+        "status": _metadata_value(content, "status"),
+        "created": _metadata_value(content, "created"),
+        "updated": _metadata_value(content, "updated"),
+    }
+
+
+def _title_from_content(content: str) -> str:
+    for line in content.splitlines():
+        if line.startswith("# "):
+            return line[2:].strip()
+    return ""
+
+
+def _answer_page_paths(content: str, heading: str) -> list[str]:
+    paths: list[str] = []
+    for line in _section_lines(content, heading):
+        value = _answer_bullet_value(line)
+        if not value or _answer_none_value(value):
+            continue
+        paths.append(value)
+    return _dedupe_text(paths)
+
+
+def _answer_page_evidence(content: str) -> list[dict[str, str]]:
+    evidence: list[dict[str, str]] = []
+    for line in _section_lines(content, "Evidence"):
+        value = _answer_bullet_value(line)
+        if not value or _answer_none_value(value) or ":" not in value:
+            continue
+        path, text = value.split(":", 1)
+        normalized_path = path.strip()
+        page_type = _page_type(normalized_path)
+        if page_type not in ANSWER_CONTEXT_PAGE_TYPES:
+            continue
+        cleaned_text = text.strip()
+        if cleaned_text:
+            evidence.append({"path": normalized_path, "text": cleaned_text})
+    return evidence
+
+
+def _answer_bullet_value(line: str) -> str:
+    stripped = line.strip()
+    if not stripped.startswith("- "):
+        return ""
+    return stripped[2:].strip()
+
+
+def _answer_none_value(value: str) -> bool:
+    normalized = value.strip().casefold()
+    return normalized in {"none", "없음", "?놁쓬", ""}
+
+
+def _merge_context_pages(
+    primary: list[dict[str, Any]],
+    extra: list[dict[str, Any]],
+    *,
+    limit: int,
+) -> list[dict[str, Any]]:
+    seen: set[str] = set()
+    merged: list[dict[str, Any]] = []
+    for item in [*primary, *extra]:
+        path = str(item.get("path") or "")
+        if not path or path in seen:
+            continue
+        seen.add(path)
+        merged.append(item)
+        if len(merged) >= limit:
+            break
+    return merged
+
+
+def _similar_question(left: str, right: str) -> bool:
+    left_tokens = _semantic_tokens(left)
+    right_tokens = _semantic_tokens(right)
+    if not left_tokens or not right_tokens:
+        return False
+    overlap = left_tokens & right_tokens
+    if overlap and len(overlap) / max(1, min(len(left_tokens), len(right_tokens))) >= 0.5:
+        return True
+    return SequenceMatcher(None, _normalize_similarity_text(left), _normalize_similarity_text(right)).ratio() >= 0.72
+
+
+def _similar_answer(left: str, right: str) -> bool:
+    left_norm = _normalize_similarity_text(left)
+    right_norm = _normalize_similarity_text(right)
+    if not left_norm or not right_norm:
+        return False
+    if left_norm == right_norm:
+        return True
+    return SequenceMatcher(None, left_norm, right_norm).ratio() >= 0.88
+
+
+def _answer_page_matches_query(query: str, page: dict[str, Any]) -> bool:
+    query_tokens = _semantic_tokens(query)
+    if not query_tokens:
+        return False
+    parts = [
+        str(page.get("title") or ""),
+        str(page.get("question") or ""),
+        str(page.get("answer") or ""),
+        " ".join(str(item.get("text") or "") for item in page.get("evidence", []) or []),
+    ]
+    page_tokens = _semantic_tokens(" ".join(parts))
+    return bool(query_tokens & page_tokens)
+
+
+def _semantic_tokens(value: str) -> set[str]:
+    stopwords = {
+        "뭐야",
+        "무엇인가",
+        "설명해줘",
+        "설명",
+        "대해",
+        "대한",
+        "알려줘",
+        "정의",
+        "개념",
+    }
+    tokens: set[str] = set()
+    for token in re.findall(r"[0-9A-Za-z가-힣]+", value.casefold()):
+        stripped = _strip_common_korean_suffix(token)
+        if len(stripped) >= 2 and stripped not in stopwords:
+            tokens.add(stripped)
+    return tokens
+
+
+def _strip_common_korean_suffix(token: str) -> str:
+    suffixes = ("으로", "에서", "에게", "에", "은", "는", "이", "가", "을", "를", "와", "과", "도")
+    for suffix in suffixes:
+        if token.endswith(suffix) and len(token) > len(suffix) + 1:
+            return token[: -len(suffix)]
+    return token
+
+
+def _normalize_similarity_text(value: str) -> str:
+    return "".join(sorted(_semantic_tokens(value))) or re.sub(r"\s+", "", value.casefold())
 
 
 def _evidence_score(value: str, query_terms: list[str]) -> int:

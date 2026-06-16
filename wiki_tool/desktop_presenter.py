@@ -347,6 +347,8 @@ class DesktopGuiPresenter:
         except Exception as exc:
             return AgentAutoSaveResult(f"답변 저장 실패: {exc}")
         path = str(saved.get("path") or "wiki/answers")
+        if saved.get("unchanged"):
+            return AgentAutoSaveResult(f"기존 답변 페이지 유지됨: {path}", refresh_pages=False)
         if saved.get("updated") and not saved.get("created"):
             return AgentAutoSaveResult(f"기존 답변 페이지 업데이트됨: {path}", refresh_pages=True)
         return AgentAutoSaveResult(f"위키에 답변 저장됨: {path}", refresh_pages=True)

@@ -143,6 +143,88 @@ class AnswerAndMcpServerTests(unittest.TestCase):
                 )
             )
 
+    def test_answer_question_reuses_saved_answer_source_evidence_for_same_question(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            domain = load_domain_config(write_domain(root), root=root)
+            source = root / "wiki" / "sources" / "margin.md"
+            source.parent.mkdir(parents=True)
+            source.write_text("# Margin\n\n## Summary\n\n선물계약의 담보 예치 구조를 설명한다.", encoding="utf-8")
+            answer = root / "wiki" / "answers" / "initial-margin.md"
+            answer.parent.mkdir(parents=True)
+            answer.write_text(
+                "\n".join(
+                    [
+                        "# 개시증거금이 뭐야",
+                        "",
+                        "## Answer",
+                        "",
+                        "개시증거금은 포지션을 처음 설정할 때 예치하는 위탁증거금입니다.",
+                        "",
+                        "## Used Pages",
+                        "",
+                        "- wiki/sources/margin.md",
+                        "",
+                        "## Evidence",
+                        "",
+                        "- wiki/sources/margin.md: 개시증거금은 포지션을 처음 설정할 때 예치하는 위탁증거금입니다.",
+                        "",
+                        "## Related Pages",
+                        "",
+                        "- 없음",
+                        "",
+                        "## Maintenance Notes",
+                        "",
+                        "- created: 2026-01-01T00:00:00Z",
+                        "- updated: 2026-01-01T00:00:00Z",
+                        "- status: ok",
+                        "- question: 개시증거금이 뭐야",
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            adapter = WikiToolAdapter(domain)
+
+            answer_payload = adapter.answer_question("개시증거금이 뭐야")
+
+            self.assertEqual(answer_payload["status"], "ok")
+            self.assertFalse(answer_payload["fallback"])
+            self.assertEqual(answer_payload["provider"], "rule_based")
+            self.assertEqual(answer_payload["evidence"][0]["path"], "wiki/sources/margin.md")
+            self.assertIn("개시증거금", answer_payload["answer"])
+            self.assertEqual(answer_payload["save_decision"]["save_action"], "save")
+
+    def test_apply_wiki_update_reuses_similar_answer_page_without_duplicate_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            adapter = WikiToolAdapter(load_domain_config(write_domain(root), root=root))
+            first = adapter.apply_wiki_update(
+                question="개시증거금이 뭐야",
+                answer="개시증거금은 포지션 설정 시 예치하는 위탁증거금입니다.",
+                used_pages=[{"path": "wiki/sources/margin.md"}],
+                related_pages=[],
+                evidence=[{"path": "wiki/sources/margin.md", "text": "개시증거금은 위탁증거금입니다."}],
+                status="ok",
+                suggested_title="개시증거금이 뭐야",
+            )
+
+            second = adapter.apply_wiki_update(
+                question="개시증거금에 대해 설명해줘",
+                answer="개시증거금은 포지션 설정 시 예치하는 위탁증거금입니다.",
+                used_pages=[{"path": "wiki/sources/margin.md"}],
+                related_pages=[],
+                evidence=[{"path": "wiki/sources/margin.md", "text": "개시증거금은 위탁증거금입니다."}],
+                status="ok",
+                suggested_title="개시증거금에 대해 설명해줘",
+            )
+
+            self.assertEqual(second["path"], first["path"])
+            self.assertFalse(second["created"])
+            self.assertFalse(second["updated"])
+            self.assertTrue(second["unchanged"])
+            self.assertEqual(len(list((root / "wiki" / "answers").glob("*.md"))), 1)
+
     def test_answer_question_admits_when_evidence_is_missing(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
