@@ -15,7 +15,7 @@ class GeminiAgentBridgeTests(unittest.TestCase):
             provider_command="gemini-custom",
         )
 
-        command = build_gemini_command(config)
+        command = build_gemini_command(config, "actual task prompt")
 
         self.assertEqual(
             command,
@@ -29,7 +29,7 @@ class GeminiAgentBridgeTests(unittest.TestCase):
                 "--model",
                 "gemini-model",
                 "-p",
-                "Follow the task from stdin. Output only the requested result.",
+                "actual task prompt",
             ],
         )
 
@@ -41,14 +41,14 @@ class GeminiAgentBridgeTests(unittest.TestCase):
             provider_command="gemini",
         )
 
-        command = build_gemini_command(config)
+        command = build_gemini_command(config, "actual task prompt")
 
         self.assertNotIn("--model", command)
         self.assertIn("--approval-mode", command)
         self.assertIn("--output-format", command)
-        self.assertEqual(command[-2:], ["-p", "Follow the task from stdin. Output only the requested result."])
+        self.assertEqual(command[-2:], ["-p", "actual task prompt"])
 
-    def test_gemini_bridge_passes_prompt_via_stdin_not_command_argument(self):
+    def test_gemini_bridge_passes_prompt_directly_to_prompt_argument(self):
         calls = []
 
         def runner(*args, **kwargs):
@@ -64,8 +64,8 @@ class GeminiAgentBridgeTests(unittest.TestCase):
 
         command = calls[0][0][0]
         kwargs = calls[0][1]
-        self.assertNotIn("very long prompt body", command)
-        self.assertEqual(kwargs["input"], "very long prompt body")
+        self.assertEqual(command[-2:], ["-p", "very long prompt body"])
+        self.assertNotIn("input", kwargs)
 
     def test_gemini_bridge_returns_stdout_as_answer_payload(self):
         calls = []
@@ -85,7 +85,7 @@ class GeminiAgentBridgeTests(unittest.TestCase):
         self.assertEqual(result.status, "ok")
         self.assertEqual(result.answer, "Gemini 응답")
         self.assertEqual(result.to_answer_payload()["provider"], "gemini")
-        self.assertEqual(calls[0][1]["input"], "질문")
+        self.assertEqual(calls[0][0][0][-2:], ["-p", "질문"])
 
     def test_gemini_bridge_extracts_text_from_cli_json_wrapper(self):
         def runner(*args, **kwargs):
@@ -205,7 +205,7 @@ class GeminiAgentBridgeTests(unittest.TestCase):
         calls = []
 
         def runner(*args, **kwargs):
-            calls.append(kwargs["input"])
+            calls.append(args[0][-1])
             return subprocess.CompletedProcess(args=args[0], returncode=0, stdout="- review ok", stderr="")
 
         bridge = GeminiAgentBridge(
@@ -224,7 +224,7 @@ class GeminiAgentBridgeTests(unittest.TestCase):
         calls = []
 
         def runner(*args, **kwargs):
-            calls.append(kwargs["input"])
+            calls.append(args[0][-1])
             return subprocess.CompletedProcess(args=args[0], returncode=0, stdout="# Source\n\n## Summary\n\nok", stderr="")
 
         bridge = GeminiAgentBridge(
@@ -245,7 +245,7 @@ class GeminiAgentBridgeTests(unittest.TestCase):
         calls = []
 
         def runner(*args, **kwargs):
-            calls.append(kwargs["input"])
+            calls.append(args[0][-1])
             return subprocess.CompletedProcess(args=args[0], returncode=0, stdout="# Concept\n\n## Source Evidence\n\n- ok", stderr="")
 
         bridge = GeminiAgentBridge(
@@ -260,6 +260,24 @@ class GeminiAgentBridgeTests(unittest.TestCase):
         self.assertIn("Concept Agent", calls[0])
         self.assertIn("## Source Evidence", calls[0])
         self.assertIn("## Candidate Concepts", calls[0])
+
+    def test_gemini_bridge_rejects_prompt_too_long_for_direct_argument(self):
+        calls = []
+
+        def runner(*args, **kwargs):
+            calls.append((args, kwargs))
+            return subprocess.CompletedProcess(args=args[0], returncode=0, stdout="should not run", stderr="")
+
+        bridge = GeminiAgentBridge(
+            AgentProviderConfig(provider="gemini", model="", codex_command="codex.cmd", provider_command="gemini"),
+            runner=runner,
+        )
+
+        result = bridge.run_prompt("x" * 30000)
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.status, "gemini_prompt_too_long")
+        self.assertEqual(calls, [])
 
     def test_gemini_bridge_handles_empty_stdout_as_graceful_failure(self):
         def runner(*args, **kwargs):

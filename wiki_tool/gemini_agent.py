@@ -14,7 +14,7 @@ from .agent_provider import DEFAULT_GEMINI_COMMAND, AgentProviderConfig
 
 
 GEMINI_AGENT_TIMEOUT_SECONDS = 120
-GEMINI_HEADLESS_PROMPT = "Follow the task from stdin. Output only the requested result."
+GEMINI_MAX_PROMPT_ARGUMENT_CHARS = 24000
 
 
 @dataclass(frozen=True)
@@ -57,14 +57,22 @@ class GeminiAgentBridge:
         self.timeout_seconds = timeout_seconds
 
     def run_prompt(self, prompt: str) -> GeminiAgentResult:
-        command = build_gemini_command(self.config)
+        if len(prompt) > GEMINI_MAX_PROMPT_ARGUMENT_CHARS:
+            return _failure(
+                "gemini_prompt_too_long",
+                (
+                    "Gemini prompt is too long for direct -p argument delivery: "
+                    f"{len(prompt)} chars > {GEMINI_MAX_PROMPT_ARGUMENT_CHARS}"
+                ),
+                None,
+            )
+        command = build_gemini_command(self.config, prompt)
         try:
             completed = (
-                _run_gemini_subprocess(command, prompt, self.timeout_seconds)
+                _run_gemini_subprocess(command, self.timeout_seconds)
                 if self.runner is None
                 else self.runner(
                     command,
-                    input=prompt,
                     text=True,
                     capture_output=True,
                     encoding="utf-8",
@@ -104,7 +112,7 @@ class GeminiAgentBridge:
         return self.run_prompt(build_concept_prompt(source_page))
 
 
-def build_gemini_command(config: AgentProviderConfig) -> list[str]:
+def build_gemini_command(config: AgentProviderConfig, prompt: str = "") -> list[str]:
     command = shlex.split(config.provider_command or DEFAULT_GEMINI_COMMAND, posix=False)
     if not command:
         command = [DEFAULT_GEMINI_COMMAND]
@@ -117,24 +125,23 @@ def build_gemini_command(config: AgentProviderConfig) -> list[str]:
         args.extend(["--output-format", "json"])
     if config.model:
         args.extend(["--model", config.model])
-    args.extend(["-p", GEMINI_HEADLESS_PROMPT])
+    args.extend(["-p", prompt])
     return args
 
 
-def _run_gemini_subprocess(command: list[str], prompt: str, timeout_seconds: int) -> subprocess.CompletedProcess[str]:
+def _run_gemini_subprocess(command: list[str], timeout_seconds: int) -> subprocess.CompletedProcess[str]:
     with tempfile.TemporaryDirectory(prefix="llm_wiki_gemini_cli_", ignore_cleanup_errors=True) as cwd:
-        return _run_gemini_subprocess_in_cwd(command, prompt, timeout_seconds, cwd)
+        return _run_gemini_subprocess_in_cwd(command, timeout_seconds, cwd)
 
 
 def _run_gemini_subprocess_in_cwd(
     command: list[str],
-    prompt: str,
     timeout_seconds: int,
     cwd: str,
 ) -> subprocess.CompletedProcess[str]:
     process = subprocess.Popen(
         command,
-        stdin=subprocess.PIPE,
+        stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
@@ -143,7 +150,7 @@ def _run_gemini_subprocess_in_cwd(
         cwd=cwd,
     )
     try:
-        stdout, stderr = process.communicate(input=prompt, timeout=timeout_seconds)
+        stdout, stderr = process.communicate(timeout=timeout_seconds)
     except subprocess.TimeoutExpired as exc:
         _terminate_process_tree(process)
         try:
