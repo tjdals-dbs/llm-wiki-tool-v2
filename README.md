@@ -34,6 +34,58 @@ LLM Wiki Tool v2는 사용자가 직접 만든 지식 도메인의 자료를 Mar
 
 ## 빠른 실행
 
+처음 보는 사용자는 저장소를 받은 뒤 운영체제별 실행 파일을 사용하면 됩니다. `.env`는 선택 사항입니다. Codex CLI나 Gemini CLI가 로그인되어 있으면 자동으로 감지하고, 둘 다 없어도 `rule_based` fallback으로 기본 위키 생성 흐름을 확인할 수 있습니다.
+
+답변과 maintenance 품질은 Codex + `gpt-5.5` 조합을 권장합니다. Gemini는 기본 모델이 `gemini-2.5-flash`라 복잡한 요약이나 concept 생성 품질이 낮을 수 있으므로, Gemini를 사용할 경우 아래 `실행 방법 상세`의 provider/model override를 참고해 더 상위 모델로 바꾸는 것을 권장합니다.
+
+```bash
+git clone <repository-url>
+cd llm_wiki_v2
+```
+
+### Windows
+
+```powershell
+setup.bat
+run_app.bat
+```
+
+### macOS
+
+```bash
+chmod +x setup.sh run_app.sh
+./setup.sh
+./run_app.sh
+```
+
+GUI가 열리면 왼쪽 상단에서 도메인을 선택하거나 `새 도메인`을 눌러 개인 도메인을 만듭니다. Windows에서는 `raw 폴더 열기`로 현재 도메인의 raw 폴더를 열고 Markdown, PDF, HTML 같은 자료를 넣을 수 있습니다. macOS에서는 Finder를 직접 열어 `user_domains/<slug>/raw/` 폴더에 자료 파일을 복사하세요. 오른쪽 패널의 `위키 업데이트`를 누르고 기다리면 raw scan, source summary, concept organize, graph/index/overview/log 갱신, lint가 한 번에 실행됩니다.
+
+처리가 끝나면 왼쪽 목록에 `Sources`, `Concepts`, `Wiki Info`가 나타납니다. 중앙 패널에서 문서 본문과 관계 그래프를 확인하고, 오른쪽 Wiki Agent에 질문할 수 있습니다.
+
+GUI 없이 CLI로 먼저 확인하려는 고급 사용자는 아래 명령을 사용할 수 있습니다.
+
+```powershell
+python scripts\wiki_tool.py --domain user_domains\my-wiki\domain.yml pipeline
+python scripts\lint_wiki.py --domain user_domains\my-wiki\domain.yml
+```
+
+## Desktop GUI
+
+GUI는 browser UI가 아니라 PySide6 기반 3분할 데스크톱 앱입니다.
+
+- 왼쪽: 도메인 선택, 새 사용자 도메인 생성, raw 폴더 열기, wiki page 목록과 검색
+- 중앙: 선택한 Markdown wiki page 본문과 관계 그래프
+- 오른쪽: Wiki Agent chat, provider/model 상태, 위키 업데이트 버튼, 고급 maintenance controls
+
+관계 그래프는 선택한 문서와 연관 page를 보여주며, 그래프 node를 클릭해 해당 wiki page로 이동할 수 있습니다.
+
+오른쪽 Wiki Agent는 MCP tool registry를 우선 route로 사용합니다. GUI에는 `agent route: mcp/codex`, `agent route: mcp/gemini`, `agent route: mcp/rule_based`, `agent route: direct fallback`처럼 현재 답변 경로가 표시됩니다. agent 질문과 maintenance 계열 작업은 background worker에서 실행되어 긴 작업 중에도 창이 멈추지 않도록 구성되어 있습니다.
+
+일반 사용자는 `위키 업데이트` 버튼 하나로 raw scan, source summary, concept organize, answer-derived concept update, graph/navigation refresh, lint를 실행할 수 있습니다. 세부 작업 버튼은 `고급 관리` 영역에 접어 둡니다.
+
+
+## 실행 방법 상세
+
 Python 3.11 이상을 권장합니다.
 
 ```powershell
@@ -226,18 +278,6 @@ python scripts\smoke_gemini_model_matrix.py --role ingest --model gemini-2.5-fla
 
 이 matrix smoke는 ingest, concept, answer role에 대해 Gemini model id 후보를 임시 smoke 경로로 검증합니다. 로컬 Gemini CLI가 model list를 제공하지 않는 환경에서는 후보 id를 추측하지 말고 `--model`로 실제 후보를 넘겨 row별 PASS/FAIL을 확인하세요. invalid model id는 해당 row만 FAIL로 표시되고 전체 비교는 계속 진행됩니다.
 
-## Desktop GUI
-
-GUI는 browser UI가 아니라 PySide6 기반 3분할 데스크톱 앱입니다.
-
-- 왼쪽: 도메인 선택, 새 사용자 도메인 생성, raw 폴더 열기, wiki page 목록과 검색
-- 중앙: 선택한 Markdown wiki page 본문과 관계 그래프
-- 오른쪽: Wiki Agent chat, provider/model 상태, 위키 업데이트 버튼, 고급 maintenance controls
-
-오른쪽 Wiki Agent는 MCP tool registry를 우선 route로 사용합니다. GUI에는 `agent route: mcp/codex`, `agent route: mcp/gemini`, `agent route: mcp/rule_based`, `agent route: direct fallback`처럼 현재 답변 경로가 표시됩니다. agent 질문과 maintenance 계열 작업은 background worker에서 실행되어 긴 작업 중에도 창이 멈추지 않도록 구성되어 있습니다.
-
-일반 사용자는 `위키 업데이트` 버튼 하나로 raw scan, source summary, concept organize, answer-derived concept update, graph/navigation refresh, lint를 실행할 수 있습니다. 세부 작업 버튼은 `고급 관리` 영역에 접어 둡니다.
-
 ## MCP Tool 목록
 
 기본 MCP server는 `--toolset readonly`로 실행되며 다음 read-only/context 도구만 노출합니다: `list_wiki_pages`, `read_wiki_page`, `search_wiki`, `get_wiki_graph`, `get_related_pages`, `ask_wiki_context`, `run_wiki_lint`. 아래 전체 도구 목록은 `--toolset full`을 명시했을 때 외부 MCP client에 노출할 수 있는 maintenance/update 도구까지 포함합니다.
@@ -358,3 +398,9 @@ python scripts\smoke_codex_provider.py --domain examples\finance\domain.yml --qu
 - 완전한 background job system은 아닙니다. `scripts\run_agent_runtime.py`는 반복 실행을 제공하지만, 별도 queue/retry dashboard는 없습니다.
 - 검색은 로컬 Markdown 검색과 graph context 중심입니다. 별도 vector database는 포함하지 않습니다.
 - Gemini provider는 answer, ingest, concept, review role에 연결되어 있습니다.
+
+## Demo 화면
+
+아래 이미지는 실제 GUI에서 샘플/개인 도메인의 wiki가 렌더링된 화면 예시입니다. 제출용 public repo에는 민감한 원문 자료를 포함하지 않고, 화면 캡처는 `demo/` 아래에 둡니다.
+
+![LLM Wiki Tool GUI demo](demo/llm_wiki_demo.png)
